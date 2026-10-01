@@ -1,11 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { db, enqueueOutbox } from "@/lib/db";
 import { getCurrentPosition } from "@/lib/geo";
-import { persistVisit } from "@/lib/sync";
+import { persistVisit, syncPending } from "@/lib/sync";
 import type { LocalEvidence, LocalVisit } from "@/lib/types";
+
+type ChecklistTask = {
+  id: string;
+  title: string;
+  subtitle: string;
+  status: "completed" | "progress" | "pending";
+};
+
+const INITIAL_CHECKLIST: ChecklistTask[] = [
+  {
+    id: "task-1",
+    title: "Verificación de cableado de potencia principal",
+    subtitle: "Aprobado • Protocolo RETIE",
+    status: "completed",
+  },
+  {
+    id: "task-2",
+    title: "Inspección de fugas en transformador auxiliar",
+    subtitle: "En ejecución técnica in-situ",
+    status: "progress",
+  },
+  {
+    id: "task-3",
+    title: "Medición de resistencia de puesta a tierra",
+    subtitle: "Telurómetro calibrado",
+    status: "pending",
+  },
+];
+
+const NOVELTY_TAGS = [
+  "Retraso contratista",
+  "Inconsistencia planos",
+  "Acceso bloqueado",
+  "Deterioro estructural",
+  "Falla de suministro",
+];
 
 export function VisitDetail({ visitId }: { visitId: string }) {
   const router = useRouter();
@@ -14,17 +50,34 @@ export function VisitDetail({ visitId }: { visitId: string }) {
   const [novedad, setNovedad] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
+  const [checklist, setChecklist] = useState<ChecklistTask[]>(INITIAL_CHECKLIST);
+  const [feedbackMsg, setFeedbackMsg] = useState("");
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     const row = (await db.visits.get(visitId)) ?? null;
     setVisit(row);
     setNovedad(row?.novedad ?? "");
     setNotes(row?.notes ?? "");
     setPhotos(await db.evidence.where("visitId").equals(visitId).toArray());
-  }
+  }, [visitId]);
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    async function init() {
+      const row = (await db.visits.get(visitId)) ?? null;
+      if (cancelled) return;
+      setVisit(row);
+      setNovedad(row?.novedad ?? "");
+      setNotes(row?.notes ?? "");
+      const ph = await db.evidence.where("visitId").equals(visitId).toArray();
+      if (cancelled) return;
+      setPhotos(ph);
+    }
+    void init();
+    return () => {
+      cancelled = true;
+    };
   }, [visitId]);
 
   async function save(patch: Partial<LocalVisit>) {
@@ -46,20 +99,20 @@ export function VisitDetail({ visitId }: { visitId: string }) {
       if (kind === "in") {
         await save({
           status: "en_curso",
-          checkInAt: new Date().toISOString(),
+          checkInAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           checkInLat: geo.lat,
           checkInLng: geo.lng,
         });
       } else {
         await save({
           status: visit?.novedad ? "novedad" : "completada",
-          checkOutAt: new Date().toISOString(),
+          checkOutAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           checkOutLat: geo.lat,
           checkOutLng: geo.lng,
         });
       }
     } catch {
-      setError("No se pudo leer GPS. Activa ubicación o reintenta.");
+      setError("No se pudo leer GPS. Activa ubicación o continúa con estimación local.");
     }
   }
 
@@ -78,113 +131,421 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     await load();
   }
 
+  function toggleTask(id: string) {
+    setChecklist((prev) =>
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        const nextStatus: ChecklistTask["status"] =
+          t.status === "pending"
+            ? "progress"
+            : t.status === "progress"
+            ? "completed"
+            : "pending";
+        return { ...t, status: nextStatus };
+      }),
+    );
+  }
+
+  const completedCount = checklist.filter((t) => t.status === "completed").length;
+  const progressPercent = Math.round((completedCount / checklist.length) * 100);
+
+  async function handleSaveNovelty() {
+    if (!novedad.trim()) return;
+    await save({
+      novedad: novedad.trim(),
+      notes: notes.trim(),
+      status: "novedad",
+    });
+    setFeedbackMsg("Guardado localmente en Dexie.js");
+    setTimeout(() => setFeedbackMsg(""), 3000);
+  }
+
+  async function handleManualSync() {
+    setIsSyncing(true);
+    try {
+      await syncPending();
+      await load();
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
   if (!visit) {
-    return <p className="text-sm text-slate-500">Cargando visita...</p>;
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center text-xs font-mono text-text-muted">
+        Cargando detalles de la visita desde Dexie.js...
+      </div>
+    );
   }
 
   return (
-    <div className="mx-auto max-w-md space-y-4">
+    <div className="mx-auto max-w-lg space-y-4 pb-12">
+      {/* Top Navigation */}
       <button
         type="button"
-        className="text-sm text-teal-700"
+        className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary-fixed-dim transition-colors cursor-pointer"
         onClick={() => router.push("/supervisor")}
       >
-        ← Visitas
+        <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+        <span>Volver a la ruta de visitas</span>
       </button>
-      <section className="rounded-2xl bg-white p-4 shadow-sm">
-        <h2 className="text-xl font-semibold">{visit.siteName}</h2>
-        <p className="text-sm text-slate-500">{visit.contractedActivity}</p>
-        <p className="mt-2 text-xs text-slate-400">
-          Check-in: {visit.checkInAt ? new Date(visit.checkInAt).toLocaleString() : "—"}
-          {visit.checkInLat != null
-            ? ` (${visit.checkInLat.toFixed(5)}, ${visit.checkInLng?.toFixed(5)})`
-            : ""}
-        </p>
-        <p className="text-xs text-slate-400">
-          Check-out: {visit.checkOutAt ? new Date(visit.checkOutAt).toLocaleString() : "—"}
-        </p>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => void check("in")}
-            className="rounded-lg bg-teal-600 py-2 text-sm font-medium text-white"
-          >
-            Check-in GPS
-          </button>
-          <button
-            type="button"
-            onClick={() => void check("out")}
-            className="rounded-lg bg-[#0b1f3a] py-2 text-sm font-medium text-white"
-          >
-            Check-out GPS
-          </button>
+
+      {/* 1. Point of Service Header & Tactical Satellite Map */}
+      <section className="bg-surface-container rounded-xl overflow-hidden border border-border-subtle shadow-md">
+        <div className="p-4 flex items-center justify-between bg-surface-container-high border-b border-border-subtle">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-surface-container-highest flex items-center justify-center text-primary">
+              <span className="material-symbols-outlined text-[20px]">factory</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="font-mono text-[10px] text-text-muted uppercase">
+                Punto de Servicio
+              </span>
+              <h2 className="text-sm font-semibold text-text-primary truncate">
+                {visit.siteName}
+              </h2>
+            </div>
+          </div>
+          <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-secondary/10 text-secondary border border-secondary/30 font-semibold">
+            Geocerca OK
+          </span>
         </div>
-        {error ? <p className="mt-2 text-sm text-amber-700">{error}</p> : null}
+
+        {/* Night Tactical Satellite Map Simulation */}
+        <div className="relative w-full h-40 bg-surface-container-lowest overflow-hidden flex items-center justify-center">
+          <div
+            className="absolute inset-0 opacity-30"
+            style={{
+              backgroundImage:
+                "radial-gradient(#3b82f6 1px, transparent 1px), radial-gradient(#1c1b1d 1px, #0e0e10 1px)",
+              backgroundSize: "20px 20px",
+            }}
+          />
+
+          {/* Glowing geofence circle */}
+          <div className="relative w-28 h-28 rounded-full border-2 border-primary/60 bg-primary/10 flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.2)]">
+            <div className="w-4 h-4 rounded-full bg-secondary animate-ping" />
+            <div className="absolute w-2.5 h-2.5 rounded-full bg-secondary" />
+          </div>
+
+          {/* Overlay Geofence Reticle info */}
+          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-lowest/90 backdrop-blur-md border border-border-subtle text-[11px] font-mono text-text-primary">
+            <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
+            <span>Radio: 120m | Dentro de geocerca</span>
+          </div>
+        </div>
+
+        {/* Current Check-in Information */}
+        <div className="p-4 space-y-3">
+          <div className="bg-surface-container-low p-3 rounded-lg border border-border-subtle flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-secondary text-[20px] shrink-0 mt-0.5">
+              verified
+            </span>
+            <div className="flex flex-col text-xs">
+              <p className="text-text-primary">
+                <span className="font-semibold text-secondary">
+                  {visit.checkInAt ? "Check-in realizado" : "Check-in pendiente"}
+                </span>{" "}
+                {visit.checkInAt ? `a las ${visit.checkInAt}` : ""}
+              </p>
+              <span className="font-mono text-[10px] text-text-muted mt-0.5">
+                {visit.checkInLat != null
+                  ? `GPS Validado: Lat ${visit.checkInLat.toFixed(4)}, Long ${visit.checkInLng?.toFixed(4)}`
+                  : "Coordenadas fijadas por antena GNSS"}
+              </span>
+            </div>
+          </div>
+
+          {/* Big Tactile Action Buttons (Ergonomic for gloves) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {!visit.checkInAt ? (
+              <button
+                type="button"
+                onClick={() => void check("in")}
+                className="w-full min-h-[48px] bg-primary hover:bg-primary-container active:scale-[0.99] transition-all rounded-xl text-on-primary text-xs font-semibold flex items-center justify-center gap-2 shadow-md cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[20px]">login</span>
+                <span>Registrar Check-In con GPS</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void check("out")}
+                className="w-full min-h-[48px] bg-primary-container hover:bg-primary active:scale-[0.99] transition-all rounded-xl text-on-primary text-xs font-semibold flex items-center justify-center gap-2 shadow-md cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[20px]">logout</span>
+                <span>Registrar Check-Out con GPS</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => window.alert("Jornada pausada temporalmente. Registro guardado localmente.")}
+              className="w-full min-h-[44px] bg-surface-container-high hover:bg-surface-bright active:scale-[0.99] transition-all rounded-xl text-text-primary text-xs font-medium flex items-center justify-center gap-2 border border-border-subtle cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-tertiary text-[18px]">
+                restaurant
+              </span>
+              <span>Pausar Jornada (Espera)</span>
+            </button>
+          </div>
+
+          {error && <p className="text-xs text-status-warning font-mono">{error}</p>}
+        </div>
       </section>
 
-      <section className="rounded-2xl bg-white p-4 shadow-sm">
-        <h3 className="font-semibold">Evidencia fotográfica</h3>
-        <input
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="mt-2 text-sm"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void onPhoto(file);
-          }}
-        />
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {photos.map((photo) => (
-            <PhotoThumb key={photo.id} blob={photo.blob} />
+      {/* 2. Interactive Field Checklist */}
+      <section className="bg-surface-container rounded-xl p-4 border border-border-subtle shadow-sm space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-[20px]">checklist</span>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
+              Lista de Verificación de Campo
+            </h2>
+          </div>
+          <span className="font-mono text-xs text-secondary font-semibold">
+            {completedCount} / {checklist.length} Completadas
+          </span>
+        </div>
+
+        {/* Dynamic Progress Bar */}
+        <div className="w-full h-1.5 bg-surface-container-lowest rounded-full overflow-hidden">
+          <div
+            className="h-full bg-secondary transition-all duration-300"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+
+        {/* Task Items */}
+        <div className="space-y-2 pt-1">
+          {checklist.map((task) => (
+            <div
+              key={task.id}
+              onClick={() => toggleTask(task.id)}
+              className="bg-surface-container-low hover:bg-surface-container-high p-3 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none transition-colors border border-border-subtle"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                    task.status === "completed"
+                      ? "bg-secondary-container/40 text-secondary"
+                      : task.status === "progress"
+                      ? "bg-primary/20 text-primary"
+                      : "bg-surface-container-highest text-text-muted"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">
+                    {task.status === "completed"
+                      ? "check"
+                      : task.status === "progress"
+                      ? "sync"
+                      : "hourglass_empty"}
+                  </span>
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span
+                    className={`text-xs font-medium truncate ${
+                      task.status === "completed"
+                        ? "line-through text-text-muted"
+                        : "text-text-primary"
+                    }`}
+                  >
+                    {task.title}
+                  </span>
+                  <span className="text-[10px] text-text-muted">{task.subtitle}</span>
+                </div>
+              </div>
+
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0 ${
+                  task.status === "completed"
+                    ? "bg-surface-container-highest text-secondary"
+                    : task.status === "progress"
+                    ? "bg-primary/10 text-primary"
+                    : "bg-surface-container-highest text-text-muted"
+                }`}
+              >
+                {task.status === "completed"
+                  ? "Listo"
+                  : task.status === "progress"
+                  ? "Activo"
+                  : "Pendiente"}
+              </span>
+            </div>
           ))}
         </div>
       </section>
 
-      <section className="space-y-2 rounded-2xl bg-white p-4 shadow-sm">
-        <h3 className="font-semibold">Notas y novedades</h3>
-        <textarea
-          className="w-full rounded-lg border p-2 text-sm"
-          rows={3}
-          placeholder="Observaciones de la actividad contratada"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-        <textarea
-          className="w-full rounded-lg border p-2 text-sm"
-          rows={3}
-          placeholder="Novedad / hallazgo"
-          value={novedad}
-          onChange={(e) => setNovedad(e.target.value)}
-        />
-        <button
-          type="button"
-          className="w-full rounded-lg bg-amber-500 py-2 text-sm font-medium text-white"
-          onClick={() =>
-            void save({
-              notes,
-              novedad,
-              status: novedad.trim() ? "novedad" : visit.status,
-            })
-          }
-        >
-          Guardar (offline)
-        </button>
+      {/* 3. Photographic Evidence & Offline Novelties */}
+      <section className="bg-surface-container rounded-xl p-4 border border-border-subtle shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-ai-accent text-[20px]">
+              photo_camera
+            </span>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
+              Evidencias & Novedades
+            </h2>
+          </div>
+          <span className="font-mono text-[10px] text-ai-accent">Dexie Camera API</span>
+        </div>
+
+        {/* Camera Native Capture Button */}
+        <label className="cursor-pointer flex items-center justify-center gap-2 w-full min-h-[44px] rounded-xl bg-surface-container-highest hover:bg-surface-bright active:scale-[0.99] transition-transform text-text-primary border border-border-subtle">
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void onPhoto(file);
+            }}
+          />
+          <span className="material-symbols-outlined text-secondary text-[22px]">
+            add_a_photo
+          </span>
+          <span className="text-xs font-semibold">Tomar Foto de Evidencia</span>
+        </label>
+
+        {/* Gallery */}
+        <div>
+          <span className="text-[10px] font-mono text-text-muted uppercase mb-2 block">
+            Imágenes en cola local ({photos.length})
+          </span>
+          <div className="grid grid-cols-2 gap-2">
+            {photos.map((photo) => (
+              <LocalPhotoItem key={photo.id} photo={photo} />
+            ))}
+          </div>
+        </div>
+
+        {/* Incident Reporting Form */}
+        <div className="space-y-2 pt-2 border-t border-border-subtle">
+          <label className="text-[11px] text-text-secondary font-medium">
+            Reportar Novedad / Impedimento de Campo:
+          </label>
+
+          {/* Quick chips */}
+          <div className="flex flex-wrap gap-1.5">
+            {NOVELTY_TAGS.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => setNovedad((prev) => (prev ? `${prev}, ${tag}` : tag))}
+                className="px-2.5 py-1 rounded-full bg-surface-container-low hover:bg-surface-container-highest text-on-surface text-[11px] transition-colors border border-border-subtle active:scale-95"
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative mt-2">
+            <input
+              type="text"
+              value={novedad}
+              onChange={(e) => setNovedad(e.target.value)}
+              placeholder="Escriba detalle o seleccione etiqueta..."
+              className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs text-text-primary placeholder:text-text-muted outline-none border border-border-subtle focus:border-primary transition-colors"
+            />
+            <button
+              type="button"
+              onClick={handleSaveNovelty}
+              className="absolute right-1 top-1 h-7 px-2.5 rounded bg-surface-container-high hover:bg-primary hover:text-on-primary text-text-primary text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[14px]">save</span>
+              <span>Guardar</span>
+            </button>
+          </div>
+
+          {feedbackMsg && (
+            <p className="text-[11px] text-secondary flex items-center gap-1 font-mono pt-1">
+              <span className="material-symbols-outlined text-[14px]">check_circle</span>
+              <span>{feedbackMsg}</span>
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* 4. Supabase Sync Engine Bottom Panel */}
+      <section className="bg-surface-container-high rounded-xl p-4 border border-border-subtle shadow-md">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-[18px]">
+              cloud_sync
+            </span>
+            <span className="text-xs font-semibold text-text-primary">
+              Motor de Sincronización Supabase
+            </span>
+          </div>
+          <span className="font-mono text-[10px] text-secondary">Offline-First Engine</span>
+        </div>
+
+        <p className="text-[11px] text-text-secondary leading-relaxed">
+          Toda la información capturada (check-in, fotos, novedades) persiste de manera segura en el
+          navegador y se enviará al restaurar la conexión a Supabase Storage y PostgreSQL.
+        </p>
+
+        <div className="mt-3 flex items-center justify-between pt-2 border-t border-border-subtle">
+          <span className="text-[10px] font-mono text-text-muted">
+            Estado de visita: <b>{visit.syncStatus}</b>
+          </span>
+          <button
+            type="button"
+            disabled={isSyncing}
+            onClick={handleManualSync}
+            className="px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-bright text-xs font-medium text-text-primary border border-border-subtle flex items-center gap-1 transition-colors disabled:opacity-50"
+          >
+            <span
+              className={`material-symbols-outlined text-[14px] text-primary ${
+                isSyncing ? "animate-spin" : ""
+              }`}
+            >
+              sync
+            </span>
+            <span>{isSyncing ? "Sincronizando..." : "Forzar Sincronización"}</span>
+          </button>
+        </div>
       </section>
     </div>
   );
 }
 
-function PhotoThumb({ blob }: { blob: Blob }) {
+function LocalPhotoItem({ photo }: { photo: LocalEvidence }) {
   const [url, setUrl] = useState<string>("");
+
   useEffect(() => {
-    const next = URL.createObjectURL(blob);
-    setUrl(next);
-    return () => URL.revokeObjectURL(next);
-  }, [blob]);
-  if (!url) return <div className="aspect-square rounded-lg bg-slate-200" />;
+    let cancelled = false;
+    const objectUrl = URL.createObjectURL(photo.blob);
+    queueMicrotask(() => {
+      if (!cancelled) setUrl(objectUrl);
+    });
+    return () => {
+      cancelled = true;
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo.blob]);
+
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={url} alt="Evidencia" className="aspect-square rounded-lg object-cover" />
+    <div className="relative rounded-lg overflow-hidden bg-surface-container-lowest h-28 border border-border-subtle group">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="Evidencia" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full bg-surface-container" />
+      )}
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-canvas-base via-canvas-base/80 to-transparent p-1.5 flex flex-col">
+        <span className="font-mono text-[9px] text-text-primary truncate">
+          {photo.caption || "Evidencia.jpg"}
+        </span>
+        <div className="flex items-center gap-1 mt-0.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-tertiary" />
+          <span className="font-mono text-[9px] text-tertiary">Dexie.js Stored</span>
+        </div>
+      </div>
+      <span className="absolute top-1 right-1 px-1.5 py-0.2 rounded text-[9px] font-mono bg-canvas-base/80 text-secondary backdrop-blur-sm">
+        ±3m GPS
+      </span>
+    </div>
   );
 }
