@@ -11,6 +11,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { roleHomePath } from "@/lib/role-routes";
 import type { UserRole } from "@/lib/types";
 import { BrandMark } from "@/components/landing/BrandMark";
 
@@ -59,7 +60,7 @@ export default function LoginClient() {
   const next = params.get("next");
 
   useEffect(() => {
-    if (user) router.replace(next || "/dashboard");
+    if (user) router.replace(next || roleHomePath(user.role));
   }, [next, router, user]);
 
   if (loading) {
@@ -82,8 +83,8 @@ export default function LoginClient() {
             Acceso a la plataforma
           </h1>
           <p className="mt-2 text-sm md:text-base text-text-secondary max-w-lg">
-            Selecciona tu rol para ingresar al panel central. Desde allí podrás
-            abrir el módulo correspondiente a tu perfil operativo.
+            Selecciona tu rol y entra directo a supervisor, coordinador o portal
+            de cliente según tu perfil.
           </p>
         </div>
 
@@ -96,7 +97,7 @@ export default function LoginClient() {
                 type="button"
                 onClick={() => {
                   enterDemo(role.id);
-                  router.push(next || "/dashboard");
+                  router.push(next || roleHomePath(role.id));
                 }}
                 className={`group relative rounded-2xl bg-surface-container-low/90 border border-border-subtle p-5 text-left transition-all flex flex-col justify-between shadow-sm hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/10 ${role.accent}`}
               >

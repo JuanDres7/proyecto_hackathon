@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { BrandMark } from "./BrandMark";
 
 const LINKS = [
+  { href: "#inicio", label: "Inicio" },
   { href: "#nosotros", label: "Nosotros" },
-  { href: "#servicios", label: "Servicios" },
-  { href: "#impacto", label: "Impacto" },
+  { href: "#servicio", label: "Servicio" },
   { href: "#contacto", label: "Contacto" },
 ];
 
@@ -28,7 +27,7 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
       className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
         scrolled
           ? "bg-surface/85 backdrop-blur-xl border-b border-border-subtle shadow-lg shadow-black/20"
-          : "bg-transparent border-b border-transparent"
+          : "bg-surface/40 backdrop-blur-md border-b border-border-subtle/50"
       }`}
     >
       <div className="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between gap-4">
@@ -41,7 +40,7 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
             <a
               key={link.href}
               href={link.href}
-              className="px-3 py-2 text-sm text-text-secondary hover:text-text-primary transition-colors rounded-lg hover:bg-white/5"
+              className="px-3 py-2 text-sm text-text-secondary hover:text-primary transition-colors rounded-lg hover:bg-primary/10"
             >
               {link.label}
             </a>
@@ -52,16 +51,10 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
           <button
             type="button"
             onClick={onLogin}
-            className="hidden sm:inline-flex items-center px-4 py-2 rounded-lg bg-primary hover:bg-primary-container text-on-primary text-sm font-semibold transition-colors shadow-md shadow-primary/25"
+            className="inline-flex items-center px-4 py-2 rounded-lg bg-primary hover:bg-primary-container text-on-primary text-sm font-semibold transition-colors shadow-md shadow-primary/25"
           >
             Iniciar Sesión
           </button>
-          <Link
-            href="/login"
-            className="sm:hidden inline-flex items-center px-3 py-2 rounded-lg bg-primary text-on-primary text-sm font-semibold"
-          >
-            Entrar
-          </Link>
           <button
             type="button"
             className="md:hidden p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-white/5"
@@ -80,7 +73,7 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
               key={link.href}
               href={link.href}
               onClick={() => setOpen(false)}
-              className="px-3 py-2.5 text-sm text-text-secondary hover:text-text-primary rounded-lg hover:bg-white/5"
+              className="px-3 py-2.5 text-sm text-text-secondary hover:text-primary rounded-lg hover:bg-primary/10"
             >
               {link.label}
             </a>

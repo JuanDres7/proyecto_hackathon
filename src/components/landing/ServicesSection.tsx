@@ -29,14 +29,14 @@ const SERVICES = [
 
 export function ServicesSection() {
   return (
-    <section id="servicios" className="relative py-20 md:py-28 bg-surface-container-lowest/60">
+    <section id="servicio" className="relative py-20 md:py-28 bg-surface-container-lowest/60">
       <div className="max-w-6xl mx-auto px-5">
         <div className="max-w-2xl">
           <p className="text-sm font-semibold tracking-wide text-secondary uppercase">
-            Nuestros servicios
+            Servicio
           </p>
           <h2 className="mt-3 font-display text-3xl md:text-4xl font-semibold text-text-primary tracking-tight">
-            Soluciones diseñadas para operación en campo
+            Servicios que supervisamos y vendemos con confianza
           </h2>
           <p className="mt-4 text-text-secondary text-base md:text-lg leading-relaxed">
             Cada servicio se opera con la misma capa de control: evidencias,

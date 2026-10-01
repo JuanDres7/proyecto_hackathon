@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
+import { roleHomePath } from "@/lib/role-routes";
 import type { UserRole } from "@/lib/types";
 import { BrandMark } from "./BrandMark";
 
@@ -70,7 +71,7 @@ export function LoginModal({
   useEffect(() => {
     if (open && user) {
       onClose();
-      router.push("/dashboard");
+      router.push(roleHomePath(user.role));
     }
   }, [open, user, onClose, router]);
 
@@ -84,7 +85,7 @@ export function LoginModal({
       enterDemo(role);
       setLoading(false);
       onClose();
-      router.push("/dashboard");
+      router.push(roleHomePath(role));
     }, 350);
   }
 
@@ -121,7 +122,7 @@ export function LoginModal({
               Iniciar sesión
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
-              Ingresa tus credenciales o elige un rol demo para acceder al panel.
+              Elige tu rol e ingresa. Te llevamos directo a la página que te corresponde.
             </p>
           </div>
 
@@ -178,7 +179,7 @@ export function LoginModal({
                 Accediendo…
               </>
             ) : (
-              "Entrar al panel"
+              "Entrar a mi espacio"
             )}
           </button>
 

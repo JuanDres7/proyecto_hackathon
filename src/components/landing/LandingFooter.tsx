@@ -13,16 +13,16 @@ export function LandingFooter() {
         </div>
 
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-text-secondary">
-          <a href="#nosotros" className="hover:text-text-primary transition-colors">
+          <a href="#inicio" className="hover:text-primary transition-colors">
+            Inicio
+          </a>
+          <a href="#nosotros" className="hover:text-primary transition-colors">
             Nosotros
           </a>
-          <a href="#servicios" className="hover:text-text-primary transition-colors">
-            Servicios
+          <a href="#servicio" className="hover:text-primary transition-colors">
+            Servicio
           </a>
-          <a href="#impacto" className="hover:text-text-primary transition-colors">
-            Impacto
-          </a>
-          <a href="#contacto" className="hover:text-text-primary transition-colors">
+          <a href="#contacto" className="hover:text-primary transition-colors">
             Contacto
           </a>
           <Link href="/login" className="hover:text-primary transition-colors">
