@@ -120,7 +120,7 @@ async function loadOwned(email: string): Promise<ClientServiceSummary[]> {
   const admin = createAdminClient();
   if (!admin) return local;
   try {
-    const remote = await servicesFromSupabase(admin, email);
+    const remote = await within(servicesFromSupabase(admin, email), 1500);
     const seen = new Set(remote.map((item) => item.serviceNumber));
     return [...remote, ...local.filter((item) => !seen.has(item.serviceNumber))];
   } catch {
@@ -170,6 +170,22 @@ async function servicesFromSupabase(
       });
     }
   return items;
+}
+
+function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function servicesFromMemory(email: string): ClientServiceSummary[] {

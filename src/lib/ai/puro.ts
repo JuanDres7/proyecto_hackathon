@@ -7,6 +7,7 @@ import {
   type QuoteSlots,
 } from "@/lib/ai/slots";
 import { requiredQuoteFields } from "@/lib/quote-fields";
+import { listServicesForEmail, statusLabel } from "@/lib/client-services";
 import { getOrderByNumber, lookupProgress } from "@/lib/orders";
 import type { QuoteDraft } from "@/lib/types";
 
@@ -36,16 +37,15 @@ export type PuroTurnResult = {
   } | null;
 };
 
-const SYSTEM = `Eres Puro, el asistente de LimpiApp. Conversas en español, breve y natural, usando el historial.
-Fases: cotización, progreso y finalización.
+const SYSTEM = `Eres Puro, el nombre del asistente de LimpiApp. Esta respuesta la genera Gemini.
+Conversas en español, breve y natural.
 Reglas:
-- Extrae solo datos que la persona dijo en el último mensaje. Si dijo fecha y hora explícitas, scheduledAt va en ISO de America/Bogota (UTC-5).
+- El estado de un servicio sale solo de SERVICIOS_DEL_CLIENTE y de HECHOS. No inventes códigos, precios, coordenadas ni estados.
+- Si la persona pregunta por sus servicios, resume los de SERVICIOS_DEL_CLIENTE.
+- Extrae solo datos que dijo en el último mensaje. Si dijo fecha y hora explícitas, scheduledAt va en ISO de America/Bogota (UTC-5).
 - Servicios permitidos: aseo_general, jardineria, limpieza_piscinas.
-- No inventes un código de servicio, un precio, coordenadas, una fecha u hora que no haya dicho, ni el estado de una visita.
-- El código lo emite el sistema después de un sí explícito al resumen. Tú no lo emites ni confirmas que ya quedó creado.
-- En progreso y finalización, el estado es solo el texto de HECHOS. Si no hay HECHOS, pide el código.
+- El código lo emite el sistema después de un sí explícito al resumen. Tú no lo emites.
 - No digas que guardaste una evaluación: eso lo hace el formulario.
-- Si faltan datos, pregunta por uno o dos, sin repetir el mismo párrafo de rechazo.
 Responde solo JSON con reply (string) y, si aplica, customerName, customerDocument, email, phone, openingMessage, services, scheduledAt, location, accessNotes. Usa null cuando no esté en el último mensaje.`;
 
 function draftContext(draft?: Partial<QuoteDraft>) {
@@ -103,14 +103,15 @@ export async function puroTurn(input: {
   draft?: Partial<QuoteDraft>;
   serviceNumber?: string | null;
   editsLocked?: boolean;
+  email?: string | null;
 }): Promise<PuroTurnResult> {
   const message = input.message.trim();
   const phase = input.phase;
-  const code = phase === "cotizacion" ? null : findServiceCode(message, input.serviceNumber);
+  const code = findServiceCode(message, input.serviceNumber);
   let progress: PuroTurnResult["progress"] = null;
   let editLocked = Boolean(input.editsLocked);
 
-  if (code && phase !== "cotizacion") {
+  if (code) {
     const looked = await lookupProgress(code);
     const visit = "visit" in looked ? looked.visit ?? null : null;
     progress = {
@@ -133,20 +134,8 @@ export async function puroTurn(input: {
 
   if (!message) return base;
 
-  if (phase === "progreso" && !progress) {
-    return {
-      ...base,
-      available: true,
-      grounded: true,
-      reply: "Indica el código del servicio, por ejemplo #3000.",
-    };
-  }
-
+  const services = input.email ? await listServicesForEmail(input.email) : [];
   const factual = progress ? factualReply(progress) : null;
-  if (progress?.status === "sin_servicio_activo") {
-    return { ...base, available: true, grounded: true, reply: progress.message };
-  }
-
   const facts = progress
     ? {
         codigo: progress.serviceNumber,
@@ -158,11 +147,20 @@ export async function puroTurn(input: {
         novedad: progress.visit?.novedad ?? null,
       }
     : null;
+  const serviceFacts = services.map((service) => ({
+    codigo: service.serviceNumber,
+    tipo: service.serviceLabel,
+    lugar: service.location,
+    estado: statusLabel(service.status),
+    cuando: service.scheduledAt,
+    supervisor: service.supervisorName,
+  }));
 
   const latest = [
     `FASE: ${phase}`,
     `EDICION_BLOQUEADA: ${editLocked ? "si" : "no"}`,
     `BORRADOR: ${JSON.stringify(draftContext(input.draft))}`,
+    `SERVICIOS_DEL_CLIENTE: ${serviceFacts.length ? JSON.stringify(serviceFacts) : "ninguno"}`,
     `HECHOS: ${facts ? JSON.stringify(facts) : "ninguno"}`,
     `ULTIMO_MENSAJE: ${message}`,
   ].join("\n");
@@ -172,17 +170,17 @@ export async function puroTurn(input: {
     contents: contentsFrom(input.history ?? [], latest),
   });
 
-  const allowedCodes = [input.draft?.serviceNumber, progress?.serviceNumber].filter(
-    (value): value is string => Boolean(value?.startsWith("#")),
-  );
+  const allowedCodes = [
+    ...services.map((service) => service.serviceNumber),
+    input.draft?.serviceNumber,
+    progress?.serviceNumber,
+  ].filter((value): value is string => Boolean(value?.startsWith("#")));
 
   if (!model.ok) {
-    const extracted = phase === "cotizacion" && !editLocked ? heuristicSlots(message) : {};
     return {
       ...base,
-      extracted,
-      reply: factual,
-      grounded: Boolean(factual),
+      extracted: phase === "cotizacion" && !editLocked ? heuristicSlots(message) : {},
+      reply: null,
     };
   }
 

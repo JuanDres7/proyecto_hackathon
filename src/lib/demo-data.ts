@@ -9,7 +9,14 @@ function atDay(offset: number, hour: number) {
 }
 
 export function ensureDemoShowcase() {
-  if (memory.orders.byNumber("#3089")) return;
+  const current = memory.orders.byNumber("#3089");
+  if (
+    current?.email === "cliente@limpiapp.co" &&
+    current.location === "Cra 7 #71-21, Bogotá" &&
+    current.openingMessage === "Aseo de oficinas en la torre principal."
+  ) {
+    return;
+  }
 
   const client = {
     email: "cliente@limpiapp.co",
@@ -183,30 +190,36 @@ export function ensureDemoShowcase() {
     supervisorName,
   });
 
-  memory.alerts.add({
-    id: "demo-alert-3066",
-    visit_id: "demo-visit-3066",
-    message: "Novedad en #3066: faltó jabón en el baño del piso 2. Prioridad media.",
-    severity: "media",
-    created_at: atDay(-12, 11),
-  });
-  memory.complaints.add({
-    id: "demo-complaint-3066",
-    service_number: "#3066",
-    body: "El baño del segundo piso quedó sin jabón.",
-    rating: 2,
-    label: "calidad",
-    confidence: 86,
-    summary: "Insumo faltante en baño del piso 2.",
-    created_at: atDay(-11, 9),
-  });
-  memory.pqr.add({
-    id: "demo-pqr-3066",
-    service_number: "#3066",
-    priority: "media",
-    status: "abierta",
-    opened_at: atDay(-11, 9),
-  });
+  if (!memory.alerts.all().some((alert) => alert.id === "demo-alert-3066")) {
+    memory.alerts.add({
+      id: "demo-alert-3066",
+      visit_id: "demo-visit-3066",
+      message: "Novedad en #3066: faltó jabón en el baño del piso 2. Prioridad media.",
+      severity: "media",
+      created_at: atDay(-12, 11),
+    });
+  }
+  if (!memory.complaints.all().some((item) => item.id === "demo-complaint-3066")) {
+    memory.complaints.add({
+      id: "demo-complaint-3066",
+      service_number: "#3066",
+      body: "El baño del segundo piso quedó sin jabón.",
+      rating: 2,
+      label: "calidad",
+      confidence: 86,
+      summary: "Insumo faltante en baño del piso 2.",
+      created_at: atDay(-11, 9),
+    });
+  }
+  if (!memory.pqr.all().some((item) => item.id === "demo-pqr-3066")) {
+    memory.pqr.add({
+      id: "demo-pqr-3066",
+      service_number: "#3066",
+      priority: "media",
+      status: "abierta",
+      opened_at: atDay(-11, 9),
+    });
+  }
 
   const g = globalThis as { __limpiapp?: { seq: number } };
   if (g.__limpiapp && g.__limpiapp.seq < 3100) g.__limpiapp.seq = 3100;

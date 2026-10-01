@@ -19,7 +19,7 @@ export function ClientServices() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/my-services", { credentials: "include" })
+    void fetch("/api/my-services", { credentials: "include", signal: AbortSignal.timeout(8000) })
       .then(async (response) => {
         if (!response.ok) throw new Error("services");
         return response.json() as Promise<{ services?: ServiceCard[] }>;

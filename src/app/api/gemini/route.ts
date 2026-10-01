@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { puroTurn, type PuroPhase } from "@/lib/ai/puro";
 import { saveChatTurn } from "@/lib/orders";
 import { requireRole } from "@/lib/api-auth";
+import { seedUserById } from "@/lib/seed-users";
 
 const PHASES = new Set<PuroPhase>(["cotizacion", "progreso", "finalizacion"]);
 
@@ -38,10 +39,11 @@ export async function POST(req: Request) {
     draft: body?.draft,
     serviceNumber: body?.serviceNumber ?? body?.draft?.serviceNumber,
     editsLocked: body?.editsLocked,
+    email: gate.actor.email || seedUserById(gate.actor.id)?.email,
   });
 
   if (message.trim()) {
-    await saveChatTurn({
+    void saveChatTurn({
       draftId: body?.draft?.draftId,
       serviceNumber: result.progress?.serviceNumber ?? body?.serviceNumber,
       phase,
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
       content: message.slice(0, 2000),
     });
     if (result.reply) {
-      await saveChatTurn({
+      void saveChatTurn({
         draftId: body?.draft?.draftId,
         serviceNumber: result.progress?.serviceNumber ?? body?.serviceNumber,
         phase,

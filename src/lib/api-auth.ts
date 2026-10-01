@@ -58,11 +58,40 @@ export function sessionCookie(actor: ApiActor) {
   };
 }
 
+function demoFromRequest(req: Request): ApiActor | null {
+  const cookie = req.headers.get("cookie") ?? "";
+  const match = cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${COOKIE}=`));
+  return decodeDemoSession(match?.slice(COOKIE.length + 1));
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ms);
+      }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function requireRole(req: Request, roles: UserRole[]) {
-  const supabase = await createServerSupabase();
+  const demo = demoFromRequest(req);
+  if (demo && roles.includes(demo.role)) return { actor: demo };
+
+  const supabase = await withTimeout(createServerSupabase(), 1500);
   if (supabase) {
-    const { data } = await supabase.auth.getUser();
-    if (data.user) {
+    const auth = await withTimeout(supabase.auth.getUser(), 1500);
+    const data = auth && "data" in auth ? auth.data : null;
+    if (data?.user) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("role, full_name")
@@ -76,14 +105,6 @@ export async function requireRole(req: Request, roles: UserRole[]) {
         actor: { id: data.user.id, role, demo: false, email: data.user.email ?? undefined } as ApiActor,
       };
     }
-  }
-
-  const cookie = req.headers.get("cookie") ?? "";
-  const match = cookie.split(";").map((c) => c.trim()).find((c) => c.startsWith(`${COOKIE}=`));
-  const token = match?.slice(COOKIE.length + 1);
-  const demo = decodeDemoSession(token);
-  if (demo && roles.includes(demo.role)) {
-    return { actor: demo };
   }
 
   return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };

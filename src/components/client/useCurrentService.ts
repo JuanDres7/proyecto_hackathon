@@ -35,7 +35,10 @@ export function useCurrentService() {
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const response = await fetch("/api/my-services", { credentials: "include" });
+      const response = await fetch("/api/my-services", {
+        credentials: "include",
+        signal: AbortSignal.timeout(8000),
+      });
       if (!response.ok) throw new Error("services");
       const json = (await response.json()) as { services?: ConfirmedRow[] };
       const list = (json.services ?? []).filter((item) => item.serviceNumber);

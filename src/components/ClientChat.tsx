@@ -145,7 +145,7 @@ export function ClientChat() {
   function noteAssistantDown(available: boolean) {
     if (available || assistantDownNoted) return;
     setAssistantDownNoted(true);
-    push("assistant", "El asistente no está disponible. Puedes seguir con el formulario.");
+    push("assistant", "Gemini no respondió. Revisa la clave GEMINI_API_KEY y vuelve a escribir.");
   }
 
   function applyExtracted(extracted: Partial<QuoteDraft>) {
@@ -241,15 +241,12 @@ export function ClientChat() {
       if (json.editLocked) setDraftLockedByRoute(true);
       const labels = json.editLocked ? [] : capturedLabels(draft, json.extracted ?? {});
       if (!json.editLocked) applyExtracted(json.extracted ?? {});
-      noteAssistantDown(json.available);
-      if (json.editLocked && !draftLockedByRoute) {
-        push("assistant", "El supervisor ya está en ruta. No se puede editar ni cancelar.");
-        return;
-      }
-      if (json.available && json.reply) {
+      if (json.progress) showProgress(json);
+      if (json.reply) {
         push("assistant", json.reply);
         return;
       }
+      noteAssistantDown(json.available);
       if (labels.length && !json.editLocked) {
         push("assistant", `Anoté en el formulario: ${labels.join(", ")}.`);
       }
@@ -276,28 +273,6 @@ export function ClientChat() {
         photosNote: "Fotos de antes y después: las que existan en evidencias de la visita sincronizada.",
       });
       setState("finalizacion");
-    }
-  }
-
-  async function sendPhaseText(phase: ChatState) {
-    const text = input.trim();
-    if (!text) return;
-    push("user", text);
-    setInput("");
-    setBusy(true);
-    try {
-      const json = await converse(phase, text);
-      if (!json) {
-        noteAssistantDown(false);
-        return;
-      }
-      showProgress(json);
-      noteAssistantDown(json.available);
-      if (json.reply) push("assistant", json.reply);
-    } catch {
-      noteAssistantDown(false);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -379,22 +354,7 @@ export function ClientChat() {
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border-subtle bg-surface-container-lowest p-1">
-          {STATES.map((st) => (
-            <button
-              key={st.id}
-              type="button"
-              onClick={() => setState(st.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                state === st.id
-                  ? "bg-surface-container-high text-text-primary border border-border-subtle"
-                  : "text-text-muted"
-              }`}
-            >
-              {st.num}. {st.label}
-            </button>
-          ))}
-        </div>
+        <p className="text-xs text-text-secondary">Responde con tus servicios reales.</p>
       </div>
       <p className="text-xs text-text-secondary">{activeHint}</p>
 
@@ -414,83 +374,32 @@ export function ClientChat() {
               </div>
             ))}
           </div>
-          {state === "cotizacion" && (
-            <div className="p-3 border-t border-border-subtle flex gap-2">
-              <input
-                className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Escribe datos o sí / no"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendQuoteText();
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => void sendQuoteText()}
-              >
-                Enviar
-              </button>
-            </div>
-          )}
-          {state === "progreso" && (
-            <div className="p-3 border-t border-border-subtle flex gap-2">
-              <input
-                className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Pregunta con el código, por ejemplo #3000"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendPhaseText("progreso");
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => void sendPhaseText("progreso")}
-              >
-                Consultar
-              </button>
-            </div>
-          )}
-          {state === "finalizacion" && (
-            <div className="p-3 border-t border-border-subtle flex gap-2">
-              <input
-                className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Pregunta por el cierre o la evaluación"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendPhaseText("finalizacion");
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => void sendPhaseText("finalizacion")}
-              >
-                Enviar
-              </button>
-            </div>
-          )}
+          <div className="p-3 border-t border-border-subtle flex gap-2">
+            <input
+              className="flex-1 bg-transparent px-2 text-xs"
+              placeholder="Pregunta por tus servicios o escribe un código, por ejemplo #3089"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void sendQuoteText();
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy}
+              className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
+              onClick={() => void sendQuoteText()}
+            >
+              Enviar
+            </button>
+          </div>
         </section>
 
         <section className="min-w-0 space-y-4">
-          {state === "cotizacion" && (
-            <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-2 text-xs">
+          <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-2 text-xs">
               <h3 className="font-semibold text-sm">Datos de la solicitud</h3>
               <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Nombre" value={draft.customerName ?? ""} onChange={(e) => patchDraft({ customerName: e.target.value })} />
               <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Identificación" value={draft.customerDocument ?? ""} onChange={(e) => patchDraft({ customerDocument: e.target.value })} />
@@ -540,7 +449,6 @@ export function ClientChat() {
               )}
               {draftLockedByRoute && <p>El supervisor ya está en ruta. Editar y cancelar no están disponibles.</p>}
             </div>
-          )}
 
           {state === "finalizacion" && (
             <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-3 text-xs">

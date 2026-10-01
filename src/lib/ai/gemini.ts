@@ -8,7 +8,7 @@ export type GeminiContent = {
 };
 
 const ENDPOINT =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
 
 function stripFences(text: string) {
   return text.replace(/```json|```/g, "").trim();
@@ -31,7 +31,6 @@ export async function generateGeminiJson<T>(options: {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: options.system }] },
         generationConfig: {
-          temperature: 0.4,
           responseMimeType: "application/json",
         },
         contents: options.contents,
