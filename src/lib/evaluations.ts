@@ -173,10 +173,11 @@ export async function submitEvaluation(input: {
     if (raw) {
       const buf = Buffer.from(raw, "base64");
       photoPath = `quejas/${input.serviceNumber.replace("#", "")}-${Date.now()}`;
-      await admin.storage.from("evidencias").upload(photoPath, buf, {
+      const { error: upErr } = await admin.storage.from("evidencias").upload(photoPath, buf, {
         contentType: "image/jpeg",
         upsert: true,
       });
+      if (upErr) return { ok: false as const, error: upErr.message };
     }
   }
 
@@ -194,13 +195,15 @@ export async function submitEvaluation(input: {
   };
 
   if (admin) {
-    await admin.from("complaints").insert(row);
+    const { error } = await admin.from("complaints").insert(row);
+    if (error) return { ok: false as const, error: error.message };
     if (rating <= 2) {
-      await admin.from("pqr_cases").insert({
+      const { error: pqrErr } = await admin.from("pqr_cases").insert({
         service_number: input.serviceNumber,
         priority: "alta",
         status: "open",
       });
+      if (pqrErr) return { ok: false as const, error: pqrErr.message };
     }
   } else {
     memory.complaints.add({

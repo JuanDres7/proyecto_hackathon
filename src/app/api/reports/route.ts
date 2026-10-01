@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { buildSimplePdf } from "@/lib/pdf";
 
 function csvEscape(value: unknown) {
   const s = value == null ? "" : String(value);
@@ -63,5 +64,24 @@ export async function GET(req: Request) {
     });
   }
 
-  return NextResponse.json({ rows, formatHint: "csv|json — PDF/Excel vía CSV" });
+  if (format === "pdf") {
+    const lines = [
+      `Grupo: ${group}`,
+      `Generado: ${new Date().toISOString()}`,
+      "",
+      ...rows.map(
+        (r) =>
+          `${r.key}  total=${r.total}  ok=${r.completed}  nov=${r.novedad}  cumplimiento=${r.total ? Math.round((r.completed / r.total) * 100) : 0}%`,
+      ),
+    ];
+    const bytes = buildSimplePdf(`Reporte LimpiAPP (${group})`, lines);
+    return new NextResponse(Buffer.from(bytes), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="reporte-${group}.pdf"`,
+      },
+    });
+  }
+
+  return NextResponse.json({ rows, formatHint: "csv|pdf|json" });
 }

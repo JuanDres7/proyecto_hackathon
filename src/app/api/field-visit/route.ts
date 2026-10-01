@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fieldVisitSchema } from "@/lib/schemas";
 import { memory } from "@/lib/memory-store";
 import { validateGeofence } from "@/lib/geo";
+import { dispatchAlert } from "@/lib/notify";
 
 export async function POST(req: Request) {
   const gate = await requireRole(req, ["supervisor", "coordinador"]);
@@ -82,6 +83,12 @@ export async function POST(req: Request) {
       if (actErr) {
         return NextResponse.json({ error: actErr.message }, { status: 500 });
       }
+    }
+    if (visit.status === "novedad") {
+      await dispatchAlert({
+        title: `Novedad en ${visit.siteName}`,
+        body: `${visit.novedadPriority ?? "alta"}: ${visit.novedad ?? "sin detalle"} (${visit.serviceNumber ?? visit.siteName})`,
+      });
     }
     return NextResponse.json({ ok: true, id: data?.id });
   }

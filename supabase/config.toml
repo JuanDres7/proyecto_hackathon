@@ -1,0 +1,21 @@
+project_id = "proyecto_hackathon"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+
+[db]
+port = 54322
+
+[realtime]
+enabled = true
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true
+
+[functions.gemini-proxy]
+verify_jwt = false

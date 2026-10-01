@@ -361,15 +361,16 @@ export function CoordinatorDashboard() {
 
       {tab === "reportes" && (
         <div className="bg-surface-container-low rounded-xl p-5 border space-y-3 text-xs">
-          <p>Exportación CSV por supervisor, centro de costo o período (importable en Excel).</p>
+          <p>CSV (Excel) y PDF nativo por supervisor, centro de costo o período.</p>
           {(["supervisor", "cost_center", "period"] as const).map((g) => (
-            <a
-              key={g}
-              className="block text-primary underline"
-              href={`/api/reports?group=${g}&format=csv`}
-            >
-              Descargar {g}.csv
-            </a>
+            <div key={g} className="flex gap-3">
+              <a className="text-primary underline" href={`/api/reports?group=${g}&format=csv`}>
+                {g}.csv
+              </a>
+              <a className="text-primary underline" href={`/api/reports?group=${g}&format=pdf`}>
+                {g}.pdf
+              </a>
+            </div>
           ))}
         </div>
       )}

@@ -2,6 +2,7 @@ import { createAdminClient } from "./supabase/admin";
 import { memory } from "./memory-store";
 import { CANCELLATION_REASONS, SERVICE_CATALOG } from "./catalog";
 import { deriveProgress, progressMessage } from "./progress";
+import { dispatchAlert } from "./notify";
 import type { QuoteDraft } from "./types";
 
 const CATALOG_IDS = SERVICE_CATALOG.map((s) => s.id);
@@ -311,6 +312,11 @@ export async function coordinatorAction(opts: {
         entity: "service_orders",
         entity_id: order.id,
       });
+      await dispatchAlert({
+        title: "Ruta asignada",
+        body: `Servicio ${opts.serviceNumber} asignado.`,
+        recipientIds: [opts.supervisorId],
+      });
     }
     return { ok: true };
   }
@@ -326,7 +332,12 @@ export async function coordinatorAction(opts: {
         })
         .eq("id", opts.alertId);
       if (error) return { ok: false, error: error.message };
-      await admin
+      const { data: alertRow } = await admin
+        .from("alerts")
+        .select("visit_id")
+        .eq("id", opts.alertId)
+        .maybeSingle();
+      const { error: incErr } = await admin
         .from("incidents")
         .update({
           status: "closed",
@@ -335,6 +346,23 @@ export async function coordinatorAction(opts: {
           closed_by: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
         })
         .eq("alert_id", opts.alertId);
+      if (incErr) return { ok: false, error: incErr.message };
+      if (alertRow?.visit_id) {
+        await admin
+          .from("incidents")
+          .update({
+            status: "closed",
+            coordinator_comment: opts.comment ?? null,
+            closed_at: new Date().toISOString(),
+            closed_by: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
+          })
+          .eq("visit_id", alertRow.visit_id)
+          .eq("status", "open");
+      }
+      await dispatchAlert({
+        title: "Novedad cerrada",
+        body: opts.comment ?? `Alerta ${opts.alertId} cerrada por coordinador.`,
+      });
     }
     return { ok: true };
   }
@@ -383,11 +411,14 @@ export async function saveChatTurn(input: {
 }) {
   const admin = createAdminClient();
   if (!admin) return;
-  await admin.from("chat_turns").insert({
+  const { error } = await admin.from("chat_turns").insert({
     service_number: input.serviceNumber ?? null,
     draft_id: input.draftId ?? null,
     phase: input.phase,
     role: input.role,
     content: input.content,
   });
+  if (error) {
+    console.error("chat_turns", error.message);
+  }
 }
