@@ -34,7 +34,7 @@ npx supabase start
 npx supabase db reset
 ```
 
-Copia las keys a `.env.local` desde `.env.example`. El Sync Worker sube JSON a `visits` (deduplicado por `client_uuid`) y fotos al bucket `evidencias`.
+Copia las keys a `.env` desde `.env.example`. El Sync Worker sube JSON a `visits` (deduplicado por `client_uuid`) y fotos al bucket `evidencias`.
 
 Variables:
 
