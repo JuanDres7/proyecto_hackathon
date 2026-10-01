@@ -1,586 +1,416 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { db, enqueueOutbox } from "@/lib/db";
-import { getCurrentPosition } from "@/lib/geo";
-import { persistVisit, syncPending } from "@/lib/sync";
-import type { LocalEvidence, LocalVisit, NovedadPriority } from "@/lib/types";
-import { useAuth } from "@/lib/auth-context";
+import { useEffect, useState } from "react";
+import { SERVICE_CATALOG } from "@/lib/catalog";
+import type { LocalEvidence, NovedadPriority } from "@/lib/types";
+import { useOnlineStatus } from "./supervisor/useOnlineStatus";
+import { useSupervisorVisit } from "./supervisor/useSupervisorVisit";
+import { SUBJECT_COPY, serviceTypeLabel } from "./supervisor/visit-flow";
 
-type ChecklistTask = {
-  id: string;
-  title: string;
-  subtitle: string;
-  status: "completed" | "progress" | "pending";
-};
-
-const INITIAL_CHECKLIST: ChecklistTask[] = [
-  {
-    id: "task-1",
-    title: "Verificación de cableado de potencia principal",
-    subtitle: "Aprobado • Protocolo RETIE",
-    status: "completed",
-  },
-  {
-    id: "task-2",
-    title: "Inspección de fugas en transformador auxiliar",
-    subtitle: "En ejecución técnica in-situ",
-    status: "progress",
-  },
-  {
-    id: "task-3",
-    title: "Medición de resistencia de puesta a tierra",
-    subtitle: "Telurómetro calibrado",
-    status: "pending",
-  },
-];
-
-const NOVELTY_TAGS = [
-  "Retraso contratista",
-  "Inconsistencia planos",
-  "Acceso bloqueado",
-  "Deterioro estructural",
-  "Falla de suministro",
+const PRIORITIES: { id: NovedadPriority; label: string }[] = [
+  { id: "baja", label: "Baja" },
+  { id: "media", label: "Media" },
+  { id: "alta", label: "Alta" },
 ];
 
 export function VisitDetail({ visitId }: { visitId: string }) {
   const router = useRouter();
-  const { user } = useAuth();
-  const [visit, setVisit] = useState<LocalVisit | null>(null);
-  const [photos, setPhotos] = useState<LocalEvidence[]>([]);
-  const [novedad, setNovedad] = useState("");
-  const [notes, setNotes] = useState("");
-  const [priority, setPriority] = useState<NovedadPriority>("alta");
-  const [error, setError] = useState("");
-  const [checklist, setChecklist] = useState<ChecklistTask[]>(INITIAL_CHECKLIST);
-  const [feedbackMsg, setFeedbackMsg] = useState("");
-  const [isSyncing, setIsSyncing] = useState(false);
+  const online = useOnlineStatus();
+  const visit = useSupervisorVisit(visitId);
 
-  const load = useCallback(async () => {
-    const row = (await db.visits.get(visitId)) ?? null;
-    setVisit(row);
-    setNovedad(row?.novedad ?? "");
-    setNotes(row?.notes ?? "");
-    setPriority(row?.novedadPriority ?? "alta");
-    setPhotos(await db.evidence.where("visitId").equals(visitId).toArray());
-  }, [visitId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function init() {
-      const row = (await db.visits.get(visitId)) ?? null;
-      if (cancelled) return;
-      setVisit(row);
-      setNovedad(row?.novedad ?? "");
-      setNotes(row?.notes ?? "");
-      setPriority(row?.novedadPriority ?? "alta");
-      const ph = await db.evidence.where("visitId").equals(visitId).toArray();
-      if (cancelled) return;
-      setPhotos(ph);
-    }
-    void init();
-    return () => {
-      cancelled = true;
-    };
-  }, [visitId]);
-
-  async function save(patch: Partial<LocalVisit>) {
-    if (!visit) return;
-    const next = {
-      ...visit,
-      ...patch,
-      updatedAt: new Date().toISOString(),
-      syncStatus: "pending" as const,
-    };
-    await persistVisit(next);
-    setVisit(next);
+  if (!visit.ready) {
+    return <p className="text-sm text-text-secondary">Cargando visita…</p>;
+  }
+  if (!visit.visit || !visit.flow) {
+    return <p className="text-sm text-text-secondary">No está esta visita.</p>;
   }
 
-  async function check(kind: "in" | "out") {
-    setError("");
-    try {
-      const geo = await getCurrentPosition();
-      if (kind === "in") {
-        await save({
-          status: "en_curso",
-          checkInAt: new Date().toISOString(),
-          checkInLat: geo.lat,
-          checkInLng: geo.lng,
-        });
-      } else {
-        await save({
-          status: visit?.novedad ? "novedad" : "completada",
-          checkOutAt: new Date().toISOString(),
-          checkOutLat: geo.lat,
-          checkOutLng: geo.lng,
-        });
-      }
-    } catch {
-      setError("No se pudo leer GPS. Activa ubicación o continúa con estimación local.");
-    }
-  }
-
-  async function onPhoto(file: File) {
-    const evidence: LocalEvidence = {
-      id: crypto.randomUUID(),
-      visitId,
-      blob: file,
-      mimeType: file.type || "image/jpeg",
-      caption: "Evidencia de campo",
-      syncStatus: "pending",
-      createdAt: new Date().toISOString(),
-    };
-    await db.evidence.put(evidence);
-    await enqueueOutbox("evidence", { id: evidence.id });
-    await load();
-  }
-
-  function toggleTask(id: string) {
-    setChecklist((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const nextStatus: ChecklistTask["status"] =
-          t.status === "pending"
-            ? "progress"
-            : t.status === "progress"
-            ? "completed"
-            : "pending";
-        return { ...t, status: nextStatus };
-      }),
-    );
-  }
-
-  const completedCount = checklist.filter((t) => t.status === "completed").length;
-  const progressPercent = Math.round((completedCount / checklist.length) * 100);
-
-  async function handleSaveNovelty() {
-    if (!novedad.trim()) return;
-    await save({
-      novedad: novedad.trim(),
-      notes: notes.trim(),
-      novedadPriority: priority,
-      status: "novedad",
-    });
-    setFeedbackMsg("Guardado localmente en Dexie.js");
-    setTimeout(() => setFeedbackMsg(""), 3000);
-  }
-
-  async function handleManualSync() {
-    setIsSyncing(true);
-    try {
-      await syncPending();
-      await load();
-    } finally {
-      setIsSyncing(false);
-    }
-  }
-
-  if (!visit) {
+  if (visit.visit.checkOutAt) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center text-xs font-mono text-text-muted">
-        Cargando detalles de la visita desde Dexie.js...
-      </div>
+      <Done
+        code={visit.visit.serviceNumber}
+        checkOutAt={visit.visit.checkOutAt}
+        synced={visit.visit.syncStatus === "synced"}
+        onBack={() => router.push("/supervisor")}
+      />
     );
   }
+
+  const { flow } = visit;
+  const beforePhoto = visit.photos.find((photo) => (photo.caption ?? "").startsWith("antes"));
+  const afterPhoto = visit.photos.find((photo) => (photo.caption ?? "").startsWith("despues"));
+  const noveltyPhoto = visit.photos.find((photo) => photo.caption === "novedad");
 
   return (
-    <div className="mx-auto max-w-lg space-y-4 pb-12">
-      {/* Top Navigation */}
+    <div className="mx-auto max-w-md space-y-4 pb-4">
       <button
         type="button"
-        className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary-fixed-dim transition-colors cursor-pointer"
-        onClick={() => router.push("/supervisor")}
+        className="min-h-11 text-sm font-medium text-primary"
+        onClick={() => {
+          if (flow.phase <= 1) router.push("/supervisor");
+          else void visit.goToPhase((flow.phase - 1) as 1 | 2 | 3 | 4);
+        }}
       >
-        <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-        <span>Volver a la ruta de visitas</span>
+        Volver
       </button>
+      <p className="text-xs text-text-muted">Paso {flow.phase} de 4</p>
+      {flow.phase === 1 ? <Network online={online} /> : null}
 
-      {/* 1. Point of Service Header & Tactical Satellite Map */}
-      <section className="bg-surface-container rounded-xl overflow-hidden border border-border-subtle shadow-md">
-        <div className="p-4 flex items-center justify-between bg-surface-container-high border-b border-border-subtle">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-surface-container-highest flex items-center justify-center text-primary">
-              <span className="material-symbols-outlined text-[20px]">factory</span>
+      {flow.phase === 1 ? (
+        <section className="space-y-3 rounded-xl border border-border-subtle bg-surface-container-low p-4">
+          <p className="font-mono text-2xl font-semibold text-text-primary">
+            {visit.visit.serviceNumber || "Sin código"}
+          </p>
+          <Field label="Centro de costo" value={flow.costCenter} />
+          <Field label="Dirección" value={flow.address} />
+          <Field label="Tipo de servicio" value={serviceTypeLabel(flow)} />
+          {flow.serviceIds.length === 0 ? (
+            <div className="space-y-2">
+              {SERVICE_CATALOG.map((service) => (
+                <button
+                  key={service.id}
+                  type="button"
+                  onClick={() => void visit.chooseService(service.id)}
+                  className="min-h-11 w-full rounded-lg border border-border-subtle px-3 py-2 text-sm"
+                >
+                  {service.label}
+                </button>
+              ))}
             </div>
-            <div className="flex flex-col">
-              <span className="font-mono text-[10px] text-text-muted uppercase">
-                Punto de Servicio
-              </span>
-              <h2 className="text-sm font-semibold text-text-primary truncate">
-                {visit.siteName}
-              </h2>
-              {visit.serviceNumber && (
-                <p className="font-mono text-xs text-primary">Servicio {visit.serviceNumber}</p>
-              )}
-            </div>
-          </div>
-          <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-secondary/10 text-secondary border border-secondary/30 font-semibold">
-            Geocerca OK
-          </span>
-        </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void visit.goToPhase(2)}
+            className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary"
+          >
+            Continuar
+          </button>
+        </section>
+      ) : null}
 
-        {/* Night Tactical Satellite Map Simulation */}
-        <div className="relative w-full h-40 bg-surface-container-lowest overflow-hidden flex items-center justify-center">
-          <div
-            className="absolute inset-0 opacity-30"
-            style={{
-              backgroundImage:
-                "radial-gradient(#3b82f6 1px, transparent 1px), radial-gradient(#1c1b1d 1px, #0e0e10 1px)",
-              backgroundSize: "20px 20px",
-            }}
-          />
-
-          {/* Glowing geofence circle */}
-          <div className="relative w-28 h-28 rounded-full border-2 border-primary/60 bg-primary/10 flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.2)]">
-            <div className="w-4 h-4 rounded-full bg-secondary animate-ping" />
-            <div className="absolute w-2.5 h-2.5 rounded-full bg-secondary" />
-          </div>
-
-          {/* Overlay Geofence Reticle info */}
-          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-lowest/90 backdrop-blur-md border border-border-subtle text-[11px] font-mono text-text-primary">
-            <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-            <span>Radio: 120m | Dentro de geocerca</span>
-          </div>
-        </div>
-
-        {/* Current Check-in Information */}
-        <div className="p-4 space-y-3">
-          <div className="bg-surface-container-low p-3 rounded-lg border border-border-subtle flex items-start gap-2.5">
-            <span className="material-symbols-outlined text-secondary text-[20px] shrink-0 mt-0.5">
-              verified
-            </span>
-            <div className="flex flex-col text-xs">
-              <p className="text-text-primary">
-                <span className="font-semibold text-secondary">
-                  {visit.checkInAt ? "Check-in realizado" : "Check-in pendiente"}
-                </span>{" "}
-                  {visit.checkInAt ? `a las ${new Date(visit.checkInAt).toLocaleString("es-CO")}` : ""}
-              </p>
-              <span className="font-mono text-[10px] text-text-muted mt-0.5">
-                {visit.checkInLat != null
-                  ? `GPS Validado: Lat ${visit.checkInLat.toFixed(4)}, Long ${visit.checkInLng?.toFixed(4)}`
-                  : "Coordenadas fijadas por antena GNSS"}
-              </span>
-            </div>
-          </div>
-
-          {/* Big Tactile Action Buttons (Ergonomic for gloves) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {!visit.checkInAt ? (
-              <button
-                type="button"
-                onClick={() => void check("in")}
-                className="w-full min-h-[48px] bg-primary hover:bg-primary-container active:scale-[0.99] transition-all rounded-xl text-on-primary text-xs font-semibold flex items-center justify-center gap-2 shadow-md cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[20px]">login</span>
-                <span>Registrar Check-In con GPS</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void check("out")}
-                className="w-full min-h-[48px] bg-primary-container hover:bg-primary active:scale-[0.99] transition-all rounded-xl text-on-primary text-xs font-semibold flex items-center justify-center gap-2 shadow-md cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[20px]">logout</span>
-                <span>Registrar Check-Out con GPS</span>
-              </button>
-            )}
-
+      {flow.phase === 2 ? (
+        <section className="space-y-3 rounded-xl border border-border-subtle bg-surface-container-low p-4">
+          {!visit.visit.checkInAt ? (
             <button
               type="button"
-              onClick={async () => {
-                if (!visit.serviceNumber || !user) return;
-                await fetch("/api/en-route", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    serviceNumber: visit.serviceNumber,
-                    supervisorId: user.id,
-                  }),
-                });
-                setFeedbackMsg("En ruta registrado para la solicitud");
-                setTimeout(() => setFeedbackMsg(""), 3000);
-              }}
-              className="w-full min-h-[44px] bg-surface-container-high hover:bg-surface-bright active:scale-[0.99] transition-all rounded-xl text-text-primary text-xs font-medium flex items-center justify-center gap-2 border border-border-subtle cursor-pointer"
+              disabled={visit.busy}
+              onClick={() => void visit.startVisit()}
+              className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary disabled:opacity-60"
             >
-              <span className="material-symbols-outlined text-tertiary text-[18px]">
-                directions_walk
-              </span>
-              <span>Marcar en ruta</span>
+              Iniciar visita
             </button>
-          </div>
-
-          {error && <p className="text-xs text-status-warning font-mono">{error}</p>}
-        </div>
-      </section>
-
-      {/* 2. Interactive Field Checklist */}
-      <section className="bg-surface-container rounded-xl p-4 border border-border-subtle shadow-sm space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-[20px]">checklist</span>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
-              Lista de Verificación de Campo
-            </h2>
-          </div>
-          <span className="font-mono text-xs text-secondary font-semibold">
-            {completedCount} / {checklist.length} Completadas
-          </span>
-        </div>
-
-        {/* Dynamic Progress Bar */}
-        <div className="w-full h-1.5 bg-surface-container-lowest rounded-full overflow-hidden">
-          <div
-            className="h-full bg-secondary transition-all duration-300"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-
-        {/* Task Items */}
-        <div className="space-y-2 pt-1">
-          {checklist.map((task) => (
-            <div
-              key={task.id}
-              onClick={() => toggleTask(task.id)}
-              className="bg-surface-container-low hover:bg-surface-container-high p-3 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none transition-colors border border-border-subtle"
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                    task.status === "completed"
-                      ? "bg-secondary-container/40 text-secondary"
-                      : task.status === "progress"
-                      ? "bg-primary/20 text-primary"
-                      : "bg-surface-container-highest text-text-muted"
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[16px]">
-                    {task.status === "completed"
-                      ? "check"
-                      : task.status === "progress"
-                      ? "sync"
-                      : "hourglass_empty"}
-                  </span>
-                </div>
-                <div className="flex flex-col min-w-0">
-                  <span
-                    className={`text-xs font-medium truncate ${
-                      task.status === "completed"
-                        ? "line-through text-text-muted"
-                        : "text-text-primary"
-                    }`}
-                  >
-                    {task.title}
-                  </span>
-                  <span className="text-[10px] text-text-muted">{task.subtitle}</span>
-                </div>
-              </div>
-
-              <span
-                className={`text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0 ${
-                  task.status === "completed"
-                    ? "bg-surface-container-highest text-secondary"
-                    : task.status === "progress"
-                    ? "bg-primary/10 text-primary"
-                    : "bg-surface-container-highest text-text-muted"
-                }`}
-              >
-                {task.status === "completed"
-                  ? "Listo"
-                  : task.status === "progress"
-                  ? "Activo"
-                  : "Pendiente"}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* 3. Photographic Evidence & Offline Novelties */}
-      <section className="bg-surface-container rounded-xl p-4 border border-border-subtle shadow-sm space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-ai-accent text-[20px]">
-              photo_camera
-            </span>
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
-              Evidencias & Novedades
-            </h2>
-          </div>
-          <span className="font-mono text-[10px] text-ai-accent">Dexie Camera API</span>
-        </div>
-
-        {/* Camera Native Capture Button */}
-        <label className="cursor-pointer flex items-center justify-center gap-2 w-full min-h-[44px] rounded-xl bg-surface-container-highest hover:bg-surface-bright active:scale-[0.99] transition-transform text-text-primary border border-border-subtle">
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void onPhoto(file);
-            }}
-          />
-          <span className="material-symbols-outlined text-secondary text-[22px]">
-            add_a_photo
-          </span>
-          <span className="text-xs font-semibold">Tomar Foto de Evidencia</span>
-        </label>
-
-        {/* Gallery */}
-        <div>
-          <span className="text-[10px] font-mono text-text-muted uppercase mb-2 block">
-            Imágenes en cola local ({photos.length})
-          </span>
-          <div className="grid grid-cols-2 gap-2">
-            {photos.map((photo) => (
-              <LocalPhotoItem key={photo.id} photo={photo} />
-            ))}
-          </div>
-        </div>
-
-        {/* Incident Reporting Form */}
-        <div className="space-y-2 pt-2 border-t border-border-subtle">
-          <label className="text-[11px] text-text-secondary font-medium">
-            Reportar Novedad / Impedimento de Campo:
-          </label>
-
-          {/* Quick chips */}
-          <div className="flex flex-wrap gap-1.5">
-            {NOVELTY_TAGS.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => setNovedad((prev) => (prev ? `${prev}, ${tag}` : tag))}
-                className="px-2.5 py-1 rounded-full bg-surface-container-low hover:bg-surface-container-highest text-on-surface text-[11px] transition-colors border border-border-subtle active:scale-95"
-              >
-                {tag}
-              </button>
-            ))}
-          </div>
-
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Notas de la visita"
-            className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs"
-          />
-          <label className="text-[11px] text-text-secondary">Prioridad de la novedad (la define el supervisor)</label>
-          <select
-            value={priority}
-            onChange={(e) => setPriority(e.target.value as NovedadPriority)}
-            className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs"
-          >
-            <option value="alta">Alta</option>
-            <option value="media">Media</option>
-            <option value="baja">Baja</option>
-          </select>
-          <input
-            type="text"
-            value={novedad}
-            onChange={(e) => setNovedad(e.target.value)}
-            placeholder="Escriba detalle o seleccione etiqueta..."
-            className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs text-text-primary placeholder:text-text-muted outline-none border border-border-subtle focus:border-primary transition-colors"
-          />
-          <button
-            type="button"
-            onClick={handleSaveNovelty}
-            className="h-8 px-3 rounded bg-surface-container-high hover:bg-primary hover:text-on-primary text-text-primary text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[14px]">save</span>
-            <span>Guardar</span>
-          </button>
-
-          {feedbackMsg && (
-            <p className="text-[11px] text-secondary flex items-center gap-1 font-mono pt-1">
-              <span className="material-symbols-outlined text-[14px]">check_circle</span>
-              <span>{feedbackMsg}</span>
+          ) : (
+            <p className="text-sm text-text-secondary">
+              Llegada {formatWhen(visit.visit.checkInAt)}
             </p>
           )}
-        </div>
-      </section>
+          {visit.visit.checkInAt ? (
+            <>
+              <p className="text-sm text-text-primary">
+                Adjunta la foto de {SUBJECT_COPY[flow.beforeSubject]}.
+              </p>
+              <PhotoButton
+                label={beforePhoto ? "Cambiar foto" : "Adjuntar foto"}
+                onFile={(file) => void visit.addPhoto(file, "antes")}
+              />
+              {beforePhoto ? <PhotoThumb photo={beforePhoto} /> : null}
+              <button
+                type="button"
+                onClick={() => void visit.goToPhase(3)}
+                className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary"
+              >
+                Continuar
+              </button>
+            </>
+          ) : null}
+        </section>
+      ) : null}
 
-      {/* 4. Supabase Sync Engine Bottom Panel */}
-      <section className="bg-surface-container-high rounded-xl p-4 border border-border-subtle shadow-md">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-[18px]">
-              cloud_sync
-            </span>
-            <span className="text-xs font-semibold text-text-primary">
-              Motor de Sincronización Supabase
-            </span>
-          </div>
-          <span className="font-mono text-[10px] text-secondary">Offline-First Engine</span>
-        </div>
-
-        <p className="text-[11px] text-text-secondary leading-relaxed">
-          Toda la información capturada (check-in, fotos, novedades) persiste de manera segura en el
-          navegador y se enviará al restaurar la conexión a Supabase Storage y PostgreSQL.
-        </p>
-
-        <div className="mt-3 flex items-center justify-between pt-2 border-t border-border-subtle">
-          <span className="text-[10px] font-mono text-text-muted">
-            Estado de visita: <b>{visit.syncStatus}</b>
-          </span>
+      {flow.phase === 3 ? (
+        <section className="space-y-4 rounded-xl border border-border-subtle bg-surface-container-low p-4">
+          <ActivityList
+            activities={flow.activities}
+            onToggle={(id, done) => {
+              visit.updateActivity(id, { done });
+              void visit.persistFlow();
+            }}
+          />
+          <label className="block text-sm text-text-secondary">
+            Observaciones del cliente
+            <textarea
+              value={flow.clientNotes}
+              onChange={(event) => visit.updateClientNotes(event.target.value)}
+              onBlur={() => void visit.persistFlow()}
+              rows={3}
+              className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-container-lowest px-3 py-2 text-sm text-text-primary"
+            />
+          </label>
+          <NovedadFields
+            text={visit.novedad}
+            priority={visit.priority}
+            photo={noveltyPhoto}
+            onText={visit.setNovedad}
+            onSave={(text, nextPriority) => void visit.saveNovedad(text, nextPriority)}
+            onPhoto={(file) => void visit.addPhoto(file, "novedad")}
+          />
           <button
             type="button"
-            disabled={isSyncing}
-            onClick={handleManualSync}
-            className="px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-bright text-xs font-medium text-text-primary border border-border-subtle flex items-center gap-1 transition-colors disabled:opacity-50"
+            onClick={() => void visit.goToPhase(4)}
+            className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary"
           >
-            <span
-              className={`material-symbols-outlined text-[14px] text-primary ${
-                isSyncing ? "animate-spin" : ""
-              }`}
-            >
-              sync
-            </span>
-            <span>{isSyncing ? "Sincronizando..." : "Forzar Sincronización"}</span>
+            Continuar
           </button>
-        </div>
-      </section>
+        </section>
+      ) : null}
+
+      {flow.phase === 4 ? (
+        <section className="space-y-4 rounded-xl border border-border-subtle bg-surface-container-low p-4">
+          <ActivityList
+            activities={flow.activities}
+            showJustification
+            onToggle={(id, done) => {
+              visit.updateActivity(id, { done });
+              void visit.persistFlow();
+            }}
+            onJustification={(id, justification) => visit.updateActivity(id, { justification })}
+            onJustificationBlur={() => void visit.persistFlow()}
+          />
+          <p className="text-sm text-text-primary">Adjunta la foto de después.</p>
+          <PhotoButton
+            label={afterPhoto ? "Cambiar foto" : "Adjuntar foto"}
+            onFile={(file) => void visit.addPhoto(file, "despues")}
+          />
+          {afterPhoto ? <PhotoThumb photo={afterPhoto} /> : null}
+          <button
+            type="button"
+            disabled={visit.busy}
+            onClick={() => void visit.finishVisit()}
+            className="min-h-12 w-full rounded-xl bg-secondary px-4 py-3 text-sm font-semibold text-on-secondary disabled:opacity-60"
+          >
+            Finalizar servicio
+          </button>
+        </section>
+      ) : null}
+
+      {visit.error ? (
+        <p className="text-sm text-status-warning" role="alert">
+          {visit.error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function LocalPhotoItem({ photo }: { photo: LocalEvidence }) {
-  const [url, setUrl] = useState<string>("");
+function Network({ online }: { online: boolean }) {
+  return (
+    <p className="flex items-center gap-2 text-sm text-text-secondary">
+      <span
+        className={`h-2.5 w-2.5 rounded-full ${online ? "bg-status-online" : "bg-status-warning"}`}
+      />
+      {online ? "En línea" : "Modo offline"}
+    </p>
+  );
+}
 
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <p className="text-sm">
+      <span className="block text-xs text-text-muted">{label}</span>
+      <span className="text-text-primary">{value}</span>
+    </p>
+  );
+}
+
+function ActivityList({
+  activities,
+  showJustification = false,
+  onToggle,
+  onJustification,
+  onJustificationBlur,
+}: {
+  activities: {
+    id: string;
+    label: string;
+    group: string;
+    done: boolean;
+    needsJustification: boolean;
+    justification: string;
+  }[];
+  showJustification?: boolean;
+  onToggle: (id: string, done: boolean) => void;
+  onJustification?: (id: string, justification: string) => void;
+  onJustificationBlur?: () => void;
+}) {
+  const groups = [...new Set(activities.map((activity) => activity.group))];
+  return (
+    <div className="space-y-3">
+      {groups.map((group) => (
+        <div key={group} className="space-y-2">
+          <h3 className="text-sm font-semibold text-text-primary">{group}</h3>
+          {activities
+            .filter((activity) => activity.group === group)
+            .map((activity) => (
+              <div key={activity.id} className="rounded-lg border border-border-subtle p-3">
+                <label className="flex min-h-11 items-center gap-3 text-sm text-text-primary">
+                  <input
+                    type="checkbox"
+                    checked={activity.done}
+                    onChange={(event) => onToggle(activity.id, event.target.checked)}
+                  />
+                  {activity.label}
+                </label>
+                {showJustification && activity.needsJustification ? (
+                  <textarea
+                    value={activity.justification}
+                    onChange={(event) => onJustification?.(activity.id, event.target.value)}
+                    onBlur={onJustificationBlur}
+                    rows={2}
+                    placeholder="Justificación"
+                    className="mt-2 w-full rounded-lg border border-border-subtle bg-surface-container-lowest px-3 py-2 text-sm"
+                  />
+                ) : null}
+              </div>
+            ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NovedadFields({
+  text,
+  priority,
+  photo,
+  onText,
+  onSave,
+  onPhoto,
+}: {
+  text: string;
+  priority: NovedadPriority;
+  photo?: LocalEvidence;
+  onText: (value: string) => void;
+  onSave: (text: string, priority: NovedadPriority) => void;
+  onPhoto: (file: File) => void;
+}) {
+  const [open, setOpen] = useState(Boolean(text || photo));
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="min-h-11 text-sm font-medium text-primary"
+      >
+        Registrar novedad
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <label className="block text-sm text-text-secondary">
+        Novedad
+        <textarea
+          value={text}
+          onChange={(event) => onText(event.target.value)}
+          onBlur={(event) => onSave(event.target.value, priority)}
+          rows={3}
+          placeholder="Descripción"
+          className="mt-1 w-full rounded-lg border border-border-subtle bg-surface-container-lowest px-3 py-2 text-sm text-text-primary"
+        />
+      </label>
+      <div className="flex gap-2">
+        {PRIORITIES.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSave(text, item.id)}
+            className={`min-h-11 flex-1 rounded-lg border px-2 py-2 text-sm ${
+              priority === item.id
+                ? "border-primary text-primary"
+                : "border-border-subtle text-text-secondary"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <PhotoButton label={photo ? "Cambiar foto" : "Adjuntar foto"} onFile={onPhoto} />
+      {photo ? <PhotoThumb photo={photo} /> : null}
+    </div>
+  );
+}
+
+function PhotoButton({ label, onFile }: { label: string; onFile: (file: File) => void }) {
+  return (
+    <label className="flex min-h-12 cursor-pointer items-center justify-center rounded-xl border border-border-subtle bg-surface-container px-4 py-3 text-sm font-semibold text-text-primary">
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) onFile(file);
+        }}
+      />
+      {label}
+    </label>
+  );
+}
+
+function PhotoThumb({ photo }: { photo: LocalEvidence }) {
+  const [url, setUrl] = useState("");
   useEffect(() => {
-    let cancelled = false;
     const objectUrl = URL.createObjectURL(photo.blob);
-    queueMicrotask(() => {
-      if (!cancelled) setUrl(objectUrl);
-    });
+    const timer = window.setTimeout(() => setUrl(objectUrl), 0);
     return () => {
-      cancelled = true;
+      window.clearTimeout(timer);
       URL.revokeObjectURL(objectUrl);
     };
   }, [photo.blob]);
-
+  if (!url) return null;
   return (
-    <div className="relative rounded-lg overflow-hidden bg-surface-container-lowest h-28 border border-border-subtle group">
-      {url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={url} alt="Evidencia" className="w-full h-full object-cover" />
-      ) : (
-        <div className="w-full h-full bg-surface-container" />
-      )}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-canvas-base via-canvas-base/80 to-transparent p-1.5 flex flex-col">
-        <span className="font-mono text-[9px] text-text-primary truncate">
-          {photo.caption || "Evidencia.jpg"}
-        </span>
-        <div className="flex items-center gap-1 mt-0.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-tertiary" />
-          <span className="font-mono text-[9px] text-tertiary">Dexie.js Stored</span>
-        </div>
-      </div>
-      <span className="absolute top-1 right-1 px-1.5 py-0.2 rounded text-[9px] font-mono bg-canvas-base/80 text-secondary backdrop-blur-sm">
-        ±3m GPS
-      </span>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={url} alt="Foto adjunta" className="h-28 w-full rounded-lg object-cover" />
+  );
+}
+
+function Done({
+  code,
+  checkOutAt,
+  synced,
+  onBack,
+}: {
+  code?: string;
+  checkOutAt: string;
+  synced: boolean;
+  onBack: () => void;
+}) {
+  return (
+    <div className="mx-auto max-w-md space-y-3">
+      <h2 className="text-lg font-semibold text-text-primary">Servicio finalizado</h2>
+      {code ? <p className="font-mono text-text-primary">{code}</p> : null}
+      <p className="text-sm text-text-secondary">Salida {formatWhen(checkOutAt)}</p>
+      <p className="text-sm text-text-secondary">
+        {synced ? "Sincronizado." : "Guardado en este dispositivo. Se sincronizará cuando haya red."}
+      </p>
+      <button
+        type="button"
+        onClick={onBack}
+        className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary"
+      >
+        Volver
+      </button>
     </div>
   );
+}
+
+function formatWhen(iso: string) {
+  return new Date(iso).toLocaleString("es-CO", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

@@ -10,7 +10,7 @@ export default async function VisitPage({
   const { id } = await params;
   return (
     <RoleGate role="supervisor">
-      <AppShell title="Validación de visita">
+      <AppShell title="Visita">
         <VisitDetail visitId={id} />
       </AppShell>
     </RoleGate>

@@ -52,7 +52,7 @@ export function ClientChat() {
       id: "init-1",
       role: "assistant",
       content:
-        "Hola. Soy el chat de LimpiApp. Indica nombre, identificación, correo, teléfono, mensaje, servicios (aseo general, jardinería y/o limpieza de piscinas), fecha, hora y ubicación. Las observaciones de acceso son opcionales.",
+        "Hola. Soy Puro. Indica nombre, identificación, correo, teléfono, mensaje, servicios (aseo general, jardinería y/o limpieza de piscinas), fecha, hora y ubicación. Las observaciones de acceso son opcionales.",
       createdAt: nowStamp(),
     },
   ]);
@@ -278,22 +278,22 @@ export function ClientChat() {
   }
 
   return (
-    <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full">
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4 bg-surface-card rounded-xl border border-border-subtle shadow-md">
+    <div className="flex w-full min-w-0 flex-col gap-4">
+      <div className="flex flex-col justify-between gap-3 rounded-xl border border-border-subtle bg-surface-card p-3 shadow-md sm:flex-row sm:items-center sm:p-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-lg bg-surface-container-high border border-border-subtle flex items-center justify-center text-primary shrink-0">
             <span className="material-symbols-outlined text-[22px]">smart_toy</span>
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-semibold text-text-primary tracking-tight">
-              Portal Cliente LimpiAPP
+            <span className="text-sm font-semibold tracking-tight text-text-primary">
+              Puro
             </span>
             <p className="text-xs text-text-secondary mt-0.5">
               {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin código (borrador)"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1 p-1 bg-surface-container-lowest rounded-xl border border-border-subtle">
+        <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border-subtle bg-surface-container-lowest p-1">
           {STATES.map((st) => (
             <button
               key={st.id}
@@ -312,9 +312,9 @@ export function ClientChat() {
       </div>
       <p className="text-xs text-text-secondary">{activeHint}</p>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <section className="lg:col-span-7 flex flex-col bg-surface-card rounded-xl border border-border-subtle min-h-[420px]">
-          <div className="p-4 flex-1 overflow-y-auto space-y-3 max-h-[520px]">
+      <div className="grid grid-cols-1 gap-4">
+        <section className="flex min-h-[280px] flex-col rounded-xl border border-border-subtle bg-surface-card sm:min-h-[420px]">
+          <div className="max-h-[50vh] flex-1 space-y-3 overflow-y-auto p-3 sm:max-h-[520px] sm:p-4">
             {messages.map((msg) => (
               <div key={msg.id} className={`text-xs leading-relaxed ${msg.role === "user" ? "text-right" : ""}`}>
                 <div
@@ -385,7 +385,7 @@ export function ClientChat() {
           )}
         </section>
 
-        <section className="lg:col-span-5 space-y-4">
+        <section className="min-w-0 space-y-4">
           {state === "cotizacion" && (
             <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-2 text-xs">
               <h3 className="font-semibold text-sm">Datos de la solicitud</h3>
