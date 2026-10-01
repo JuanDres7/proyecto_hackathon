@@ -52,7 +52,7 @@ export function ClientChat() {
       id: "init-1",
       role: "assistant",
       content:
-        "Hola. Soy el chat de LimpiApp. Indica nombre, identificación, correo, teléfono, mensaje, servicios (aseo general, jardinería y/o limpieza de piscinas), fecha, hora y ubicación. Las observaciones de acceso son opcionales.",
+        "Hola, soy Puro. Te ayudo a cotizar, a consultar el progreso y a cerrar el servicio. Escribe los datos aquí o usa el formulario. El código lo emite el sistema cuando confirmas con sí.",
       createdAt: nowStamp(),
     },
   ]);
@@ -70,6 +70,7 @@ export function ClientChat() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [draftLockedByRoute, setDraftLockedByRoute] = useState(false);
+  const [assistantDownNoted, setAssistantDownNoted] = useState(false);
 
   const activeHint = useMemo(
     () => STATES.find((s) => s.id === state)?.hint ?? "",
@@ -141,77 +142,161 @@ export function ClientChat() {
     push("assistant", "No se emitió código. Corrige los datos y vuelve a pedir el resumen.");
   }
 
+  function noteAssistantDown(available: boolean) {
+    if (available || assistantDownNoted) return;
+    setAssistantDownNoted(true);
+    push("assistant", "El asistente no está disponible. Puedes seguir con el formulario.");
+  }
+
+  function applyExtracted(extracted: Partial<QuoteDraft>) {
+    if (draftLockedByRoute) return;
+    setDraft((d) => ({
+      ...d,
+      customerName: extracted.customerName || d.customerName,
+      customerDocument: extracted.customerDocument || d.customerDocument,
+      email: extracted.email || d.email,
+      phone: extracted.phone || d.phone,
+      openingMessage: d.openingMessage || extracted.openingMessage,
+      services: extracted.services?.length
+        ? [...new Set([...d.services, ...extracted.services])]
+        : d.services,
+      scheduledAt: extracted.scheduledAt || d.scheduledAt,
+      location: extracted.location || d.location,
+      accessNotes: extracted.accessNotes || d.accessNotes,
+    }));
+  }
+
+  function capturedLabels(before: QuoteDraft, extracted: Partial<QuoteDraft>) {
+    const labels: string[] = [];
+    if (extracted.customerName && extracted.customerName !== before.customerName) labels.push("nombre");
+    if (extracted.customerDocument && extracted.customerDocument !== before.customerDocument) {
+      labels.push("identificación");
+    }
+    if (extracted.email && extracted.email !== before.email) labels.push("correo");
+    if (extracted.phone && extracted.phone !== before.phone) labels.push("teléfono");
+    if (extracted.openingMessage && !before.openingMessage) labels.push("mensaje");
+    if (extracted.services?.some((id) => !before.services.includes(id))) labels.push("servicios");
+    if (extracted.scheduledAt && extracted.scheduledAt !== before.scheduledAt) labels.push("fecha y hora");
+    if (extracted.location && extracted.location !== before.location) labels.push("ubicación");
+    if (extracted.accessNotes && extracted.accessNotes !== before.accessNotes) labels.push("acceso");
+    return labels;
+  }
+
+  async function converse(phase: ChatState, text: string) {
+    const history = messages
+      .filter((m): m is ChatMessage & { role: "user" | "assistant" } => m.role === "user" || m.role === "assistant")
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.content }));
+    const res = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phase,
+        message: text,
+        history,
+        draft,
+        serviceNumber: draft.serviceNumber,
+        editsLocked: draftLockedByRoute,
+      }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      available: boolean;
+      reply: string | null;
+      extracted?: Partial<QuoteDraft>;
+      editLocked?: boolean;
+      progress?: {
+        status: string;
+        message: string;
+        serviceNumber: string;
+        visit?: { contractedActivity?: string | null; checkOutAt?: string | null } | null;
+      } | null;
+    };
+  }
+
   async function sendQuoteText() {
     if (!input.trim()) return;
     const text = input.trim();
     push("user", text);
     setInput("");
-    const lower = text.toLowerCase();
+    const token = text.toLowerCase().replace(/[.!¡¿?]/g, "").trim();
     if (awaitingConfirm) {
-      if (["si", "sí", "yes"].includes(lower)) {
+      if (token === "si" || token === "sí" || token === "yes") {
         await confirmYes();
         return;
       }
-      if (["no"].includes(lower)) {
+      if (token === "no") {
         await confirmNo();
         return;
       }
     }
     setBusy(true);
     try {
-      const res = await fetch("/api/chat/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      const json = (await res.json()) as { extracted: Partial<QuoteDraft> };
-      const e = json.extracted;
-      setDraft((d) => ({
-        ...d,
-        customerName: e.customerName || d.customerName,
-        customerDocument: e.customerDocument || d.customerDocument,
-        email: e.email || d.email,
-        phone: e.phone || d.phone,
-        openingMessage: e.openingMessage || d.openingMessage || text,
-        services: e.services?.length ? e.services : d.services,
-        scheduledAt: e.scheduledAt || d.scheduledAt,
-        location: e.location || d.location,
-        accessNotes: e.accessNotes || d.accessNotes,
-      }));
-      push("assistant", "Actualicé el formulario con lo que pude leer. Completa lo que falte y pulsa Ver resumen. El modelo no asigna código.");
+      const json = await converse("cotizacion", text);
+      if (!json) {
+        noteAssistantDown(false);
+        return;
+      }
+      if (json.editLocked) setDraftLockedByRoute(true);
+      const labels = json.editLocked ? [] : capturedLabels(draft, json.extracted ?? {});
+      if (!json.editLocked) applyExtracted(json.extracted ?? {});
+      noteAssistantDown(json.available);
+      if (json.editLocked && !draftLockedByRoute) {
+        push("assistant", "El supervisor ya está en ruta. No se puede editar ni cancelar.");
+        return;
+      }
+      if (json.available && json.reply) {
+        push("assistant", json.reply);
+        return;
+      }
+      if (labels.length && !json.editLocked) {
+        push("assistant", `Anoté en el formulario: ${labels.join(", ")}.`);
+      }
+    } catch {
+      noteAssistantDown(false);
     } finally {
       setBusy(false);
     }
   }
 
-  async function queryProgress(code: string) {
-    const res = await fetch("/api/progress", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serviceNumber: code }),
-    });
-    const json = (await res.json()) as {
-      status: string;
-      message: string;
-      visit?: { contractedActivity?: string | null; checkOutAt?: string | null } | null;
-    };
-    setProgressText(json.message);
-    if (json.status === "pendiente_sincronizacion") {
+  function showProgress(json: NonNullable<Awaited<ReturnType<typeof converse>>>) {
+    const progress = json.progress;
+    if (!progress) return;
+    setProgressText(progress.message);
+    if (json.editLocked || progress.status === "pendiente_sincronizacion") {
       setDraftLockedByRoute(true);
     }
-    if (json.status === "finalizado" && json.visit) {
+    if (progress.status !== "sin_servicio_activo") {
+      patchDraft({ serviceNumber: progress.serviceNumber });
+    }
+    if (progress.status === "finalizado") {
       setClosure({
-        activities: json.visit.contractedActivity || "Actividades registradas en la visita.",
+        activities: progress.visit?.contractedActivity || "Actividades registradas en la visita.",
         photosNote: "Fotos de antes y después: las que existan en evidencias de la visita sincronizada.",
       });
-    }
-    push("assistant", json.message);
-    if (json.status === "finalizado") {
-      push(
-        "assistant",
-        `Cierre del servicio ${code.startsWith("#") ? code : `#${code}`}. Actividades: ${json.visit?.contractedActivity || "las registradas en la visita"}. ${ "Fotos de antes y después: las que existan en el depósito." }`,
-      );
       setState("finalizacion");
+    }
+  }
+
+  async function sendPhaseText(phase: ChatState) {
+    const text = input.trim();
+    if (!text) return;
+    push("user", text);
+    setInput("");
+    setBusy(true);
+    try {
+      const json = await converse(phase, text);
+      if (!json) {
+        noteAssistantDown(false);
+        return;
+      }
+      showProgress(json);
+      noteAssistantDown(json.available);
+      if (json.reply) push("assistant", json.reply);
+    } catch {
+      noteAssistantDown(false);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -286,7 +371,7 @@ export function ClientChat() {
           </div>
           <div className="flex flex-col min-w-0">
             <span className="text-sm font-semibold text-text-primary tracking-tight">
-              Portal Cliente LimpiAPP
+              Puro
             </span>
             <p className="text-xs text-text-secondary mt-0.5">
               {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin código (borrador)"}
@@ -356,30 +441,47 @@ export function ClientChat() {
             <div className="p-3 border-t border-border-subtle flex gap-2">
               <input
                 className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Código, por ejemplo 3000 o #3000"
+                placeholder="Pregunta con el código, por ejemplo #3000"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    const code = input.trim();
-                    push("user", code);
-                    setInput("");
-                    void queryProgress(code);
+                    void sendPhaseText("progreso");
                   }
                 }}
               />
               <button
                 type="button"
+                disabled={busy}
                 className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => {
-                  const code = input.trim();
-                  push("user", code);
-                  setInput("");
-                  void queryProgress(code);
-                }}
+                onClick={() => void sendPhaseText("progreso")}
               >
                 Consultar
+              </button>
+            </div>
+          )}
+          {state === "finalizacion" && (
+            <div className="p-3 border-t border-border-subtle flex gap-2">
+              <input
+                className="flex-1 bg-transparent px-2 text-xs"
+                placeholder="Pregunta por el cierre o la evaluación"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void sendPhaseText("finalizacion");
+                  }
+                }}
+              />
+              <button
+                type="button"
+                disabled={busy}
+                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
+                onClick={() => void sendPhaseText("finalizacion")}
+              >
+                Enviar
               </button>
             </div>
           )}
