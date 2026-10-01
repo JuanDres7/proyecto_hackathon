@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { BrandMark } from "./BrandMark";
 
 export function LandingFooter() {
@@ -24,9 +25,9 @@ export function LandingFooter() {
           <a href="#contacto" className="hover:text-primary transition-colors">
             Contacto
           </a>
-          <a href="/?login=1" className="hover:text-primary transition-colors">
+          <Link href="/?login=1" className="hover:text-primary transition-colors">
             Acceso
-          </a>
+          </Link>
         </div>
       </div>
       <div className="border-t border-border-subtle px-5 py-4 text-center text-xs text-text-muted">
