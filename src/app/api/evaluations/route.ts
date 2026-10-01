@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { submitEvaluation } from "@/lib/evaluations";
+import { listEvaluationConclusions, submitEvaluation } from "@/lib/evaluations";
 import { lookupProgress } from "@/lib/orders";
+
+export async function GET() {
+  const conclusions = await listEvaluationConclusions();
+  return NextResponse.json(conclusions);
+}
 
 export async function POST(req: Request) {
   const body = (await req.json()) as {

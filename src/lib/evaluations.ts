@@ -1,5 +1,17 @@
-import { createAdminClient } from "./supabase/admin";
+import { buildConclusions, type ConclusionItem } from "./ai/conclusions";
+import { generateGeminiJson } from "./ai/gemini";
 import { memory } from "./memory-store";
+import { createAdminClient } from "./supabase/admin";
+
+const LABELS = new Set([
+  "inasistencia",
+  "calidad",
+  "conducta",
+  "facturacion",
+  "seguridad",
+  "general",
+  "pending",
+]);
 
 export async function classifyComment(text: string, serviceNumber?: string) {
   const trimmed = text.trim();
@@ -18,9 +30,10 @@ export async function classifyComment(text: string, serviceNumber?: string) {
       const json = (await res.json()) as { label?: string; confidence?: number };
       const raw = json.confidence ?? 0;
       const pct = raw <= 1 ? Math.round(raw * 100) : Math.round(raw);
+      const label = json.label && LABELS.has(json.label) ? json.label : "pending";
       return {
-        label: json.label ?? "pending",
-        confidence: Math.min(100, Math.max(0, pct)),
+        label,
+        confidence: label === "pending" ? null : Math.min(100, Math.max(0, pct)),
         source: "nlp",
         nlp_json: json as Record<string, unknown>,
       };
@@ -42,59 +55,33 @@ export async function visionCheck(opts: { comment: string; image?: string }) {
     };
   }
 
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
+  const [meta, data] = opts.image.split(",");
+  const mime = meta.match(/data:(.*);base64/)?.[1] ?? "image/jpeg";
+  const model = await generateGeminiJson<{ match?: boolean; note?: string }>({
+    system:
+      "Responde solo JSON {\"match\":true|false,\"note\":\"frase corta en español\"}. No inventes códigos, precios, horas ni estados.",
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: `¿La foto corresponde al comentario? Comentario: ${opts.comment}` },
+          { inline_data: { mime_type: mime, data } },
+        ],
+      },
+    ],
+  });
+  if (!model.ok) {
     return {
-      vision_valid: true,
+      vision_valid: null as boolean | null,
       vision_note: "Revisión visual no disponible; se guarda la foto sin bloquear la evaluación.",
     };
   }
-
-  const [meta, data] = opts.image.split(",");
-  const mime = meta.match(/data:(.*);base64/)?.[1] ?? "image/jpeg";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: "¿La foto corresponde al comentario del cliente? Responde solo JSON {\"match\":true|false,\"note\":\"frase corta en español\"}. No inventes códigos, precios, horas ni estados.",
-              },
-              { text: `Comentario: ${opts.comment}` },
-              { inline_data: { mime_type: mime, data } },
-            ],
-          },
-        ],
-      }),
-    },
-  );
-  if (!res.ok) {
-    return {
-      vision_valid: null as boolean | null,
-      vision_note: "La revisión visual no estuvo disponible.",
-    };
-  }
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
+  return {
+    vision_valid: Boolean(model.data.match),
+    vision_note:
+      model.data.note ??
+      (model.data.match ? "La foto corresponde al texto." : "La foto no corresponde al texto."),
   };
-  const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("\n") ?? "";
-  try {
-    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim()) as { match?: boolean; note?: string };
-    return {
-      vision_valid: Boolean(parsed.match),
-      vision_note: parsed.note ?? (parsed.match ? "La foto corresponde al texto." : "La foto no corresponde al texto."),
-    };
-  } catch {
-    return {
-      vision_valid: null as boolean | null,
-      vision_note: "No se pudo interpretar la revisión visual.",
-    };
-  }
 }
 
 export function fallbackSummary(rating: number, comment: string) {
@@ -103,36 +90,23 @@ export function fallbackSummary(rating: number, comment: string) {
 }
 
 export async function summarizeEvaluation(rating: number, comment: string, label: string) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return fallbackSummary(rating, comment);
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+  const model = await generateGeminiJson<{ summary?: string }>({
+    system:
+      "Resume en español, una o dos frases. Responde solo JSON {\"summary\":\"...\"}. No inventes código, precio, hora, ubicación ni estado de visita.",
+    contents: [
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `Resume en español, una o dos frases, esta evaluación. No inventes código, precio, hora, ubicación ni estado de visita. Estrellas:${rating}. Clase:${label}. Comentario:${comment || "(vacío)"}`,
-                },
-              ],
-            },
-          ],
-        }),
+        role: "user",
+        parts: [
+          {
+            text: `Estrellas:${rating}. Clase:${label}. Comentario:${comment || "(vacío)"}`,
+          },
+        ],
       },
-    );
-    if (!res.ok) return fallbackSummary(rating, comment);
-    const json = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("\n").trim() || fallbackSummary(rating, comment);
-  } catch {
-    return fallbackSummary(rating, comment);
-  }
+    ],
+  });
+  const summary = model.ok ? model.data.summary?.trim() : "";
+  if (!summary || /#\d+|\$\s?\d|\bprecio\b/i.test(summary)) return fallbackSummary(rating, comment);
+  return summary;
 }
 
 export async function submitEvaluation(input: {
@@ -195,7 +169,7 @@ export async function submitEvaluation(input: {
 
   if (admin) {
     await admin.from("complaints").insert(row);
-    if (rating <= 2) {
+    if (rating < 3) {
       await admin.from("pqr_cases").insert({
         service_number: input.serviceNumber,
         priority: "alta",
@@ -208,7 +182,7 @@ export async function submitEvaluation(input: {
       ...row,
       created_at: new Date().toISOString(),
     });
-    if (rating <= 2) {
+    if (rating < 3) {
       memory.pqr.add({
         id: crypto.randomUUID(),
         service_number: input.serviceNumber,
@@ -219,5 +193,44 @@ export async function submitEvaluation(input: {
     }
   }
 
-  return { ok: true as const, already: false, label: classified.label, pqr: rating <= 2 };
+  return { ok: true as const, already: false, label: classified.label, pqr: rating < 3 };
+}
+
+export async function listEvaluationConclusions() {
+  const admin = createAdminClient();
+  let rows: { service_number: string; label: string | null }[] = [];
+  if (admin) {
+    const { data } = await admin.from("complaints").select("service_number, label");
+    rows = (data ?? []).flatMap((row) =>
+      row.service_number ? [{ service_number: row.service_number, label: row.label ?? null }] : [],
+    );
+  } else {
+    rows = memory.complaints.all().map((row) => ({
+      service_number: row.service_number,
+      label: row.label ?? null,
+    }));
+  }
+
+  const numbers = [...new Set(rows.map((row) => row.service_number))];
+  const locations = new Map<string, string | null>();
+  if (admin && numbers.length) {
+    const { data } = await admin
+      .from("service_orders")
+      .select("service_number, location")
+      .in("service_number", numbers);
+    for (const order of data ?? []) {
+      locations.set(order.service_number, order.location ?? null);
+    }
+  } else {
+    for (const number of numbers) {
+      locations.set(number, memory.orders.byNumber(number)?.location ?? null);
+    }
+  }
+
+  const items: ConclusionItem[] = rows.map((row) => ({
+    serviceNumber: row.service_number,
+    label: row.label,
+    location: locations.get(row.service_number) ?? null,
+  }));
+  return buildConclusions(items);
 }
