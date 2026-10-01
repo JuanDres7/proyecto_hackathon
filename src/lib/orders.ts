@@ -1,3 +1,4 @@
+import { ensureDemoAssignment } from "./demo-assignment";
 import { createAdminClient } from "./supabase/admin";
 import { memory } from "./memory-store";
 import { CANCELLATION_REASONS, SERVICE_CATALOG } from "./catalog";
@@ -134,16 +135,21 @@ export async function getOrderByNumber(serviceNumber: string) {
       .eq("service_number", serviceNumber)
       .maybeSingle();
     if (!data) return null;
-    let supervisorName: string | null = null;
+    const quote = (data.quote_json ?? {}) as { demoSupervisorId?: string; supervisorName?: string };
+    let supervisorName: string | null = quote.supervisorName ?? null;
     if (data.supervisor_id) {
       const { data: p } = await admin
         .from("profiles")
         .select("full_name")
         .eq("id", data.supervisor_id)
         .maybeSingle();
-      supervisorName = p?.full_name ?? null;
+      supervisorName = p?.full_name ?? supervisorName;
     }
-    return { ...data, supervisorName };
+    return {
+      ...data,
+      supervisorName,
+      supervisor_id: data.supervisor_id ?? quote.demoSupervisorId ?? null,
+    };
   }
   return memory.orders.byNumber(serviceNumber) ?? null;
 }
@@ -229,26 +235,125 @@ export async function lookupProgress(serviceNumber: string) {
   };
 }
 
-export async function listConfirmedServices() {
+export type ClientOrderRow = {
+  serviceNumber: string | null;
+  status: string;
+  email: string | null;
+  customerName: string | null;
+  location: string | null;
+  services: string[];
+  scheduledAt: string | null;
+  enRouteAt: string | null;
+};
+
+export async function listOrdersByEmail(email: string): Promise<ClientOrderRow[]> {
+  await ensureDemoAssignment();
+  const key = email.trim().toLowerCase();
+  if (!key) return [];
   const admin = createAdminClient();
   if (admin) {
     const { data } = await admin
       .from("service_orders")
-      .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status, scheduled_at")
+      .select("service_number, status, email, customer_name, location, services, scheduled_at, en_route_at")
+      .ilike("email", key)
+      .order("created_at", { ascending: false });
+    return (data ?? []).map((row) => ({
+      serviceNumber: (row.service_number as string | null) ?? null,
+      status: row.status as string,
+      email: (row.email as string | null) ?? null,
+      customerName: (row.customer_name as string | null) ?? null,
+      location: (row.location as string | null) ?? null,
+      services: (row.services as string[] | null) ?? [],
+      scheduledAt: (row.scheduled_at as string | null) ?? null,
+      enRouteAt: (row.en_route_at as string | null) ?? null,
+    }));
+  }
+  return memory.orders
+    .all()
+    .filter((order) => (order.email ?? "").trim().toLowerCase() === key)
+    .map((order) => ({
+      serviceNumber: order.serviceNumber ?? null,
+      status: order.status,
+      email: order.email ?? null,
+      customerName: order.customerName ?? null,
+      location: order.location ?? null,
+      services: order.services,
+      scheduledAt: order.scheduledAt ?? null,
+      enRouteAt: order.enRouteAt ?? null,
+    }));
+}
+
+export async function serviceHasEvaluation(serviceNumber: string) {
+  const admin = createAdminClient();
+  if (admin) {
+    const { data } = await admin
+      .from("complaints")
+      .select("id")
+      .eq("service_number", serviceNumber)
+      .maybeSingle();
+    return Boolean(data);
+  }
+  return Boolean(memory.complaints.byNumber(serviceNumber));
+}
+
+export async function clientOwnsService(email: string | undefined, serviceNumber: string) {
+  const key = email?.trim().toLowerCase();
+  if (!key || !serviceNumber) return false;
+  const order = await getOrderByNumber(serviceNumber);
+  if (!order) return false;
+  const stored = "email" in order && typeof order.email === "string" ? order.email : "";
+  return stored.trim().toLowerCase() === key;
+}
+
+function matchesSupervisor(
+  supervisorId: string | null | undefined,
+  quote: { demoSupervisorId?: string } | null | undefined,
+  wanted: string,
+) {
+  if (wanted.startsWith("demo-")) return quote?.demoSupervisorId === wanted || supervisorId === wanted;
+  return supervisorId === wanted;
+}
+
+export async function listConfirmedServices(filter?: { email?: string; supervisorId?: string }) {
+  await ensureDemoAssignment();
+  const key = filter?.email?.trim().toLowerCase();
+  const supervisorId = filter?.supervisorId;
+  const admin = createAdminClient();
+  if (admin) {
+    let query = admin
+      .from("service_orders")
+      .select(
+        "service_number, location, services, customer_name, email, en_route_at, supervisor_id, status, scheduled_at, quote_json",
+      )
       .eq("status", "confirmed")
       .order("created_at", { ascending: false });
-    return data ?? [];
+    if (key) query = query.ilike("email", key);
+    const { data } = await query;
+    return (data ?? []).filter((row) => {
+      if (!supervisorId) return true;
+      const quote = (row.quote_json ?? null) as { demoSupervisorId?: string } | null;
+      return matchesSupervisor(row.supervisor_id as string | null, quote, supervisorId);
+    });
   }
-  return memory.orders.confirmed().map((o) => ({
-    service_number: o.serviceNumber,
-    location: o.location,
-    services: o.services,
-    customer_name: o.customerName,
-    scheduled_at: o.scheduledAt,
-    en_route_at: o.enRouteAt,
-    supervisor_id: o.supervisorId,
-    status: o.status,
-  }));
+  return memory.orders
+    .confirmed()
+    .filter((order) => !key || (order.email ?? "").trim().toLowerCase() === key)
+    .filter((order) =>
+      !supervisorId ||
+      matchesSupervisor(order.supervisorId, order.quoteJson as { demoSupervisorId?: string } | undefined, supervisorId),
+    )
+    .map((o) => ({
+      service_number: o.serviceNumber,
+      location: o.location,
+      services: o.services,
+      customer_name: o.customerName,
+      email: o.email ?? null,
+      scheduled_at: o.scheduledAt,
+      en_route_at: o.enRouteAt,
+      supervisor_id: o.supervisorId,
+      status: o.status,
+      quote_json: o.quoteJson ?? null,
+    }));
 }
 
 export async function markEnRoute(serviceNumber: string, supervisorId: string) {

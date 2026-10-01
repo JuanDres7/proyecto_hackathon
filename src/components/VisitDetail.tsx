@@ -79,18 +79,30 @@ export function VisitDetail({ visitId }: { visitId: string }) {
               ))}
             </div>
           ) : null}
+          <p className="text-sm text-text-secondary">
+            La hora y la ubicación las registra el sistema al iniciar la visita.
+          </p>
           <button
             type="button"
-            onClick={() => void visit.goToPhase(2)}
-            className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary"
+            disabled={visit.busy || flow.serviceIds.length === 0}
+            onClick={() => {
+              void (async () => {
+                const started = await visit.startVisit();
+                if (started) await visit.goToPhase(2);
+              })();
+            }}
+            className="min-h-12 w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-on-primary disabled:opacity-60"
           >
-            Continuar
+            Iniciar visita
           </button>
         </section>
       ) : null}
 
       {flow.phase === 2 ? (
         <section className="space-y-3 rounded-xl border border-border-subtle bg-surface-container-low p-4">
+          <p className="font-mono text-2xl font-semibold text-text-primary">
+            {visit.visit.serviceNumber || "Sin código"}
+          </p>
           {!visit.visit.checkInAt ? (
             <button
               type="button"

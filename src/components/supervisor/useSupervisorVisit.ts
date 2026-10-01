@@ -143,7 +143,7 @@ export function useSupervisorVisit(visitId: string) {
   async function startVisit() {
     const currentVisit = visitRef.current;
     const currentFlow = flowRef.current;
-    if (!currentVisit || !currentFlow || currentVisit.checkInAt) return;
+    if (!currentVisit || !currentFlow || currentVisit.checkInAt) return false;
     setBusy(true);
     setError("");
     try {
@@ -154,11 +154,14 @@ export function useSupervisorVisit(visitId: string) {
         checkInAt: new Date().toISOString(),
         checkInLat: geo.lat,
         checkInLng: geo.lng,
+        checkInAccuracyM: geo.accuracy,
       };
       setVisit(visitRef.current);
       await flush();
+      return true;
     } catch {
       setError("Activa la ubicación para iniciar.");
+      return false;
     } finally {
       setBusy(false);
     }

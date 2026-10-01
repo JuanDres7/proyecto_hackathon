@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { evaluationSchema } from "@/lib/schemas";
 import { listEvaluationConclusions, submitEvaluation } from "@/lib/evaluations";
-import { lookupProgress } from "@/lib/orders";
+import { clientOwnsService, lookupProgress } from "@/lib/orders";
 
 export async function GET(req: Request) {
   const gate = await requireRole(req, ["coordinador"]);
@@ -21,6 +21,10 @@ export async function POST(req: Request) {
   const code = parsed.data.serviceNumber.startsWith("#")
     ? parsed.data.serviceNumber
     : `#${parsed.data.serviceNumber}`;
+  if (gate.actor.role === "cliente") {
+    const owns = await clientOwnsService(gate.actor.email, code);
+    if (!owns) return NextResponse.json({ ok: false, error: "ajeno" }, { status: 403 });
+  }
   const progress = await lookupProgress(code);
   if (progress.status === "sin_servicio_activo") {
     return NextResponse.json({ ok: false, error: "sin_servicio" }, { status: 400 });

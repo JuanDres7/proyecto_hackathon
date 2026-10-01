@@ -1,30 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { CANCELLATION_REASONS, SERVICE_CATALOG, serviceLabels } from "@/lib/catalog";
+import { useAuth } from "@/lib/auth-context";
 import { requiredQuoteFields } from "@/lib/quote-fields";
-import type { ChatMessage, ChatState, QuoteDraft } from "@/lib/types";
+import type { ChatMessage, QuoteDraft } from "@/lib/types";
 
-const STATES: { id: ChatState; num: string; label: string; hint: string }[] = [
-  {
-    id: "cotizacion",
-    num: "1",
-    label: "Cotización",
-    hint: "Completa tus datos y confirma con sí o no. El código lo emite el sistema, no el chat.",
-  },
-  {
-    id: "progreso",
-    num: "2",
-    label: "Progreso",
-    hint: "Consulta un código. El estado sale de la solicitud y de la visita ya sincronizada.",
-  },
-  {
-    id: "finalizacion",
-    num: "3",
-    label: "Cierre y evaluación",
-    hint: "Al finalizar verás actividades y fotos. Envía de 1 a 5 estrellas, comentario y foto opcional.",
-  },
-];
+type Situation = "cotizacion" | "progreso" | "finalizacion";
+
+type Picture = {
+  situation: Situation;
+  opening: string;
+  focus: {
+    serviceNumber: string;
+    status: string;
+    message: string;
+    evaluated: boolean;
+    enRoute: boolean;
+    visit?: { contractedActivity?: string | null } | null;
+  } | null;
+};
 
 function emptyDraft(): QuoteDraft {
   return {
@@ -44,38 +39,22 @@ function formatWhen(iso?: string) {
 }
 
 export function ClientChat() {
-  const [state, setState] = useState<ChatState>("cotizacion");
+  const { user } = useAuth();
+  const [situation, setSituation] = useState<Situation>("cotizacion");
   const [draft, setDraft] = useState<QuoteDraft>(emptyDraft);
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "init-1",
-      role: "assistant",
-      content:
-        "Hola, soy Puro. Te ayudo a cotizar, a consultar el progreso y a cerrar el servicio. Escribe los datos aquí o usa el formulario. El código lo emite el sistema cuando confirmas con sí.",
-      createdAt: nowStamp(),
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [stars, setStars] = useState(5);
   const [comment, setComment] = useState("");
   const [evalDone, setEvalDone] = useState(false);
-  const [progressText, setProgressText] = useState("");
-  const [closure, setClosure] = useState<{
-    activities: string;
-    photosNote: string;
-  } | null>(null);
+  const [closure, setClosure] = useState<{ activities: string; photosNote: string } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [draftLockedByRoute, setDraftLockedByRoute] = useState(false);
   const [assistantDownNoted, setAssistantDownNoted] = useState(false);
-
-  const activeHint = useMemo(
-    () => STATES.find((s) => s.id === state)?.hint ?? "",
-    [state],
-  );
 
   function push(role: ChatMessage["role"], content: string) {
     setMessages((prev) => [
@@ -84,6 +63,74 @@ export function ClientChat() {
     ]);
   }
 
+  function applyPicture(picture: Picture) {
+    setSituation(picture.situation);
+    const focus = picture.focus;
+    setDraftLockedByRoute(Boolean(focus?.enRoute));
+    setEvalDone(Boolean(focus?.evaluated));
+    if (focus?.serviceNumber) {
+      setDraft((current) => ({
+        ...current,
+        serviceNumber: focus.serviceNumber,
+        status: "confirmed",
+      }));
+    }
+    if (focus?.status === "finalizado") {
+      setClosure({
+        activities: focus.visit?.contractedActivity || "Actividades registradas en la visita.",
+        photosNote: "Fotos de antes y después: las que existan en evidencias de la visita sincronizada.",
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setTimeout(() => {
+      setDraft((current) => ({
+        ...current,
+        email: user.email,
+        customerName: current.customerName || user.fullName,
+      }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const res = await fetch("/api/gemini", { credentials: "include" });
+        if (cancelled) return;
+        if (!res.ok) {
+          setMessages([
+            {
+              id: "init",
+              role: "assistant",
+              content: "No pude leer tus servicios.",
+              createdAt: nowStamp(),
+            },
+          ]);
+          return;
+        }
+        const picture = (await res.json()) as Picture;
+        if (cancelled) return;
+        applyPicture(picture);
+        setMessages([
+          {
+            id: "init",
+            role: "assistant",
+            content: picture.opening,
+            createdAt: nowStamp(),
+          },
+        ]);
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
   function patchDraft(p: Partial<QuoteDraft>) {
     setDraft((d) => ({ ...d, ...p }));
   }
@@ -91,10 +138,14 @@ export function ClientChat() {
   function toggleService(id: string) {
     setDraft((d) => ({
       ...d,
-      services: d.services.includes(id)
-        ? d.services.filter((x) => x !== id)
-        : [...d.services, id],
+      services: d.services.includes(id) ? d.services.filter((x) => x !== id) : [...d.services, id],
     }));
+  }
+
+  async function refreshPicture() {
+    const res = await fetch("/api/gemini", { credentials: "include" });
+    if (!res.ok) return;
+    applyPicture((await res.json()) as Picture);
   }
 
   async function askSummary() {
@@ -107,6 +158,7 @@ export function ClientChat() {
     setAwaitingConfirm(true);
     await fetch("/api/orders", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "save", draft: { ...draft, status: "pending_confirmation" } }),
     });
@@ -119,6 +171,7 @@ export function ClientChat() {
   async function confirmYes() {
     const res = await fetch("/api/orders", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "confirm", draft }),
     });
@@ -129,13 +182,18 @@ export function ClientChat() {
     }
     setDraft((d) => ({ ...d, serviceNumber: json.serviceNumber, status: "confirmed" }));
     setAwaitingConfirm(false);
-    push("assistant", `Solicitud confirmada. Tu código es ${json.serviceNumber}. El supervisor verá Servicio ${json.serviceNumber}. Confirmar de nuevo no emite otro código.`);
+    push(
+      "assistant",
+      `Solicitud confirmada. Tu código es ${json.serviceNumber}. El supervisor verá Servicio ${json.serviceNumber}. Confirmar de nuevo no emite otro código.`,
+    );
+    await refreshPicture();
   }
 
   async function confirmNo() {
     setAwaitingConfirm(false);
     await fetch("/api/orders", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "reject", draft }),
     });
@@ -154,12 +212,10 @@ export function ClientChat() {
       ...d,
       customerName: extracted.customerName || d.customerName,
       customerDocument: extracted.customerDocument || d.customerDocument,
-      email: extracted.email || d.email,
+      email: user?.email || d.email,
       phone: extracted.phone || d.phone,
       openingMessage: d.openingMessage || extracted.openingMessage,
-      services: extracted.services?.length
-        ? [...new Set([...d.services, ...extracted.services])]
-        : d.services,
+      services: extracted.services?.length ? [...new Set([...d.services, ...extracted.services])] : d.services,
       scheduledAt: extracted.scheduledAt || d.scheduledAt,
       location: extracted.location || d.location,
       accessNotes: extracted.accessNotes || d.accessNotes,
@@ -172,7 +228,6 @@ export function ClientChat() {
     if (extracted.customerDocument && extracted.customerDocument !== before.customerDocument) {
       labels.push("identificación");
     }
-    if (extracted.email && extracted.email !== before.email) labels.push("correo");
     if (extracted.phone && extracted.phone !== before.phone) labels.push("teléfono");
     if (extracted.openingMessage && !before.openingMessage) labels.push("mensaje");
     if (extracted.services?.some((id) => !before.services.includes(id))) labels.push("servicios");
@@ -182,22 +237,16 @@ export function ClientChat() {
     return labels;
   }
 
-  async function converse(phase: ChatState, text: string) {
+  async function converse(text: string) {
     const history = messages
       .filter((m): m is ChatMessage & { role: "user" | "assistant" } => m.role === "user" || m.role === "assistant")
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.content }));
     const res = await fetch("/api/gemini", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phase,
-        message: text,
-        history,
-        draft,
-        serviceNumber: draft.serviceNumber,
-        editsLocked: draftLockedByRoute,
-      }),
+      body: JSON.stringify({ message: text, history, draft }),
     });
     if (!res.ok) return null;
     return (await res.json()) as {
@@ -205,6 +254,7 @@ export function ClientChat() {
       reply: string | null;
       extracted?: Partial<QuoteDraft>;
       editLocked?: boolean;
+      situation?: Situation;
       progress?: {
         status: string;
         message: string;
@@ -214,13 +264,13 @@ export function ClientChat() {
     };
   }
 
-  async function sendQuoteText() {
+  async function sendText() {
     if (!input.trim()) return;
     const text = input.trim();
     push("user", text);
     setInput("");
     const token = text.toLowerCase().replace(/[.!¡¿?]/g, "").trim();
-    if (awaitingConfirm) {
+    if (situation === "cotizacion" && awaitingConfirm) {
       if (token === "si" || token === "sí" || token === "yes") {
         await confirmYes();
         return;
@@ -232,67 +282,30 @@ export function ClientChat() {
     }
     setBusy(true);
     try {
-      const json = await converse("cotizacion", text);
+      const json = await converse(text);
       if (!json) {
         noteAssistantDown(false);
         return;
       }
+      if (json.situation) setSituation(json.situation);
       if (json.editLocked) setDraftLockedByRoute(true);
-      const labels = json.editLocked ? [] : capturedLabels(draft, json.extracted ?? {});
-      if (!json.editLocked) applyExtracted(json.extracted ?? {});
-      noteAssistantDown(json.available);
-      if (json.editLocked && !draftLockedByRoute) {
-        push("assistant", "El supervisor ya está en ruta. No se puede editar ni cancelar.");
-        return;
+      const labels = json.editLocked || json.situation !== "cotizacion" ? [] : capturedLabels(draft, json.extracted ?? {});
+      if (!json.editLocked && json.situation === "cotizacion") applyExtracted(json.extracted ?? {});
+      if (json.progress && json.progress.status !== "sin_servicio_activo") {
+        patchDraft({ serviceNumber: json.progress.serviceNumber });
+        if (json.progress.status === "finalizado") {
+          setClosure({
+            activities: json.progress.visit?.contractedActivity || "Actividades registradas en la visita.",
+            photosNote: "Fotos de antes y después: las que existan en evidencias de la visita sincronizada.",
+          });
+        }
       }
-      if (json.available && json.reply) {
+      noteAssistantDown(json.available);
+      if (json.reply) {
         push("assistant", json.reply);
         return;
       }
-      if (labels.length && !json.editLocked) {
-        push("assistant", `Anoté en el formulario: ${labels.join(", ")}.`);
-      }
-    } catch {
-      noteAssistantDown(false);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function showProgress(json: NonNullable<Awaited<ReturnType<typeof converse>>>) {
-    const progress = json.progress;
-    if (!progress) return;
-    setProgressText(progress.message);
-    if (json.editLocked || progress.status === "pendiente_sincronizacion") {
-      setDraftLockedByRoute(true);
-    }
-    if (progress.status !== "sin_servicio_activo") {
-      patchDraft({ serviceNumber: progress.serviceNumber });
-    }
-    if (progress.status === "finalizado") {
-      setClosure({
-        activities: progress.visit?.contractedActivity || "Actividades registradas en la visita.",
-        photosNote: "Fotos de antes y después: las que existan en evidencias de la visita sincronizada.",
-      });
-      setState("finalizacion");
-    }
-  }
-
-  async function sendPhaseText(phase: ChatState) {
-    const text = input.trim();
-    if (!text) return;
-    push("user", text);
-    setInput("");
-    setBusy(true);
-    try {
-      const json = await converse(phase, text);
-      if (!json) {
-        noteAssistantDown(false);
-        return;
-      }
-      showProgress(json);
-      noteAssistantDown(json.available);
-      if (json.reply) push("assistant", json.reply);
+      if (labels.length) push("assistant", `Anoté en el formulario: ${labels.join(", ")}.`);
     } catch {
       noteAssistantDown(false);
     } finally {
@@ -302,13 +315,14 @@ export function ClientChat() {
 
   async function sendEval() {
     if (!draft.serviceNumber) {
-      push("assistant", "Indica el código del servicio para evaluar.");
+      push("assistant", "No hay un servicio finalizado para evaluar.");
       return;
     }
     setBusy(true);
     try {
       const res = await fetch("/api/evaluations", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serviceNumber: draft.serviceNumber,
@@ -334,6 +348,7 @@ export function ClientChat() {
           ? "Evaluación guardada. Se abrió un caso de prioridad alta en la cola de peticiones, quejas y reclamos."
           : "Evaluación guardada. No se abre caso PQR con 3, 4 o 5 estrellas.",
       );
+      await refreshPicture();
     } finally {
       setBusy(false);
       setImage(undefined);
@@ -347,6 +362,7 @@ export function ClientChat() {
     }
     const res = await fetch("/api/orders", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "cancel", draft, reason: cancelReason }),
     });
@@ -357,10 +373,14 @@ export function ClientChat() {
       return;
     }
     if (json.ok) {
-      setDraft((d) => ({ ...d, status: "cancelled" }));
+      setDraft((d) => ({ ...d, status: "cancelled", serviceNumber: undefined }));
       push("assistant", "Solicitud cancelada con el motivo indicado.");
+      await refreshPicture();
     }
   }
+
+  const canCancel =
+    situation === "progreso" && Boolean(draft.serviceNumber) && !draftLockedByRoute && draft.status === "confirmed";
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
@@ -370,32 +390,13 @@ export function ClientChat() {
             <span className="material-symbols-outlined text-[22px]">smart_toy</span>
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-semibold tracking-tight text-text-primary">
-              Puro
-            </span>
+            <span className="text-sm font-semibold tracking-tight text-text-primary">Puro</span>
             <p className="text-xs text-text-secondary mt-0.5">
-              {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin código (borrador)"}
+              {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin servicio confirmado"}
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border-subtle bg-surface-container-lowest p-1">
-          {STATES.map((st) => (
-            <button
-              key={st.id}
-              type="button"
-              onClick={() => setState(st.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                state === st.id
-                  ? "bg-surface-container-high text-text-primary border border-border-subtle"
-                  : "text-text-muted"
-              }`}
-            >
-              {st.num}. {st.label}
-            </button>
-          ))}
-        </div>
       </div>
-      <p className="text-xs text-text-secondary">{activeHint}</p>
 
       <div className="grid grid-cols-1 gap-4">
         <section className="flex min-h-[280px] flex-col rounded-xl border border-border-subtle bg-surface-card sm:min-h-[420px]">
@@ -413,89 +414,64 @@ export function ClientChat() {
               </div>
             ))}
           </div>
-          {state === "cotizacion" && (
-            <div className="p-3 border-t border-border-subtle flex gap-2">
-              <input
-                className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Escribe datos o sí / no"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendQuoteText();
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => void sendQuoteText()}
-              >
-                Enviar
-              </button>
-            </div>
-          )}
-          {state === "progreso" && (
-            <div className="p-3 border-t border-border-subtle flex gap-2">
-              <input
-                className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Pregunta con el código, por ejemplo #3000"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendPhaseText("progreso");
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => void sendPhaseText("progreso")}
-              >
-                Consultar
-              </button>
-            </div>
-          )}
-          {state === "finalizacion" && (
-            <div className="p-3 border-t border-border-subtle flex gap-2">
-              <input
-                className="flex-1 bg-transparent px-2 text-xs"
-                placeholder="Pregunta por el cierre o la evaluación"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendPhaseText("finalizacion");
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
-                onClick={() => void sendPhaseText("finalizacion")}
-              >
-                Enviar
-              </button>
-            </div>
-          )}
+          <div className="p-3 border-t border-border-subtle flex gap-2">
+            <input
+              className="flex-1 bg-transparent px-2 text-xs"
+              placeholder="Escribe a Puro"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void sendText();
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy}
+              className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
+              onClick={() => void sendText()}
+            >
+              Enviar
+            </button>
+          </div>
         </section>
 
         <section className="min-w-0 space-y-4">
-          {state === "cotizacion" && (
+          {situation === "cotizacion" && (
             <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-2 text-xs">
               <h3 className="font-semibold text-sm">Datos de la solicitud</h3>
-              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Nombre" value={draft.customerName ?? ""} onChange={(e) => patchDraft({ customerName: e.target.value })} />
-              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Identificación" value={draft.customerDocument ?? ""} onChange={(e) => patchDraft({ customerDocument: e.target.value })} />
-              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Correo" value={draft.email ?? ""} onChange={(e) => patchDraft({ email: e.target.value })} />
-              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Teléfono" value={draft.phone ?? ""} onChange={(e) => patchDraft({ phone: e.target.value })} />
-              <textarea className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Mensaje inicial" value={draft.openingMessage ?? ""} onChange={(e) => patchDraft({ openingMessage: e.target.value })} />
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Nombre"
+                value={draft.customerName ?? ""}
+                onChange={(e) => patchDraft({ customerName: e.target.value })}
+              />
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Identificación"
+                value={draft.customerDocument ?? ""}
+                onChange={(e) => patchDraft({ customerDocument: e.target.value })}
+              />
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Correo"
+                value={draft.email ?? ""}
+                readOnly
+              />
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Teléfono"
+                value={draft.phone ?? ""}
+                onChange={(e) => patchDraft({ phone: e.target.value })}
+              />
+              <textarea
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Mensaje inicial"
+                value={draft.openingMessage ?? ""}
+                onChange={(e) => patchDraft({ openingMessage: e.target.value })}
+              />
               <div className="flex flex-wrap gap-2">
                 {SERVICE_CATALOG.map((s) => (
                   <button
@@ -508,85 +484,123 @@ export function ClientChat() {
                   </button>
                 ))}
               </div>
-              <input type="datetime-local" className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" value={draft.scheduledAt ? draft.scheduledAt.slice(0, 16) : ""} onChange={(e) => patchDraft({ scheduledAt: e.target.value ? new Date(e.target.value).toISOString() : undefined })} />
-              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Ubicación" value={draft.location ?? ""} onChange={(e) => patchDraft({ location: e.target.value })} />
-              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Observaciones de acceso (opcional)" value={draft.accessNotes ?? ""} onChange={(e) => patchDraft({ accessNotes: e.target.value })} />
+              <input
+                type="datetime-local"
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                value={draft.scheduledAt ? draft.scheduledAt.slice(0, 16) : ""}
+                onChange={(e) =>
+                  patchDraft({ scheduledAt: e.target.value ? new Date(e.target.value).toISOString() : undefined })
+                }
+              />
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Ubicación"
+                value={draft.location ?? ""}
+                onChange={(e) => patchDraft({ location: e.target.value })}
+              />
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5"
+                placeholder="Observaciones de acceso (opcional)"
+                value={draft.accessNotes ?? ""}
+                onChange={(e) => patchDraft({ accessNotes: e.target.value })}
+              />
               <button type="button" className="w-full py-2 bg-primary text-on-primary rounded-lg" onClick={() => void askSummary()}>
                 Ver resumen y pedir confirmación
               </button>
               {awaitingConfirm && (
                 <div className="flex gap-2">
-                  <button type="button" className="flex-1 py-2 bg-secondary text-on-secondary rounded-lg" onClick={() => void confirmYes()}>Sí, confirmar</button>
-                  <button type="button" className="flex-1 py-2 border border-border-subtle rounded-lg" onClick={() => void confirmNo()}>No</button>
+                  <button type="button" className="flex-1 py-2 bg-secondary text-on-secondary rounded-lg" onClick={() => void confirmYes()}>
+                    Sí, confirmar
+                  </button>
+                  <button type="button" className="flex-1 py-2 border border-border-subtle rounded-lg" onClick={() => void confirmNo()}>
+                    No
+                  </button>
                 </div>
               )}
-              {draft.status === "confirmed" && !draftLockedByRoute && (
-                <div className="space-y-2 pt-2 border-t border-border-subtle">
-                  <p>Puedes editar y volver a confirmar. El código {draft.serviceNumber} se conserva.</p>
-                  <button type="button" className="w-full py-2 border rounded-lg" onClick={() => setCancelOpen(true)}>Cancelar solicitud</button>
-                  {cancelOpen && (
-                    <div className="space-y-2">
-                      {CANCELLATION_REASONS.map((r) => (
-                        <label key={r.id} className="flex items-center gap-2">
-                          <input type="radio" name="reason" value={r.id} checked={cancelReason === r.id} onChange={() => setCancelReason(r.id)} />
-                          {r.label}
-                        </label>
-                      ))}
-                      <button type="button" className="w-full py-2 bg-error-container rounded-lg" onClick={() => void doCancel()}>Confirmar cancelación</button>
-                    </div>
-                  )}
-                </div>
-              )}
-              {draftLockedByRoute && <p>El supervisor ya está en ruta. Editar y cancelar no están disponibles.</p>}
             </div>
           )}
 
-          {state === "finalizacion" && (
+          {situation === "finalizacion" && (
             <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-3 text-xs">
               {closure ? (
                 <p>
                   Cierre {draft.serviceNumber}. Actividades: {closure.activities}. {closure.photosNote}
                 </p>
               ) : (
-                <p>Consulta el código en progreso para ver el aviso de cierre cuando haya check-out sincronizado.</p>
+                <p>El servicio figura finalizado. La evaluación usa el código de tu cuenta.</p>
               )}
-              <input
-                className="w-full rounded-lg bg-surface-container-lowest border px-2 py-1.5"
-                placeholder="Código a evaluar"
-                value={draft.serviceNumber ?? ""}
-                onChange={(e) => patchDraft({ serviceNumber: e.target.value.startsWith("#") ? e.target.value : `#${e.target.value.replace("#", "")}` })}
-              />
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <button key={n} type="button" onClick={() => setStars(n)}>
-                    <span className="material-symbols-outlined" style={{ fontVariationSettings: `'FILL' ${n <= stars ? 1 : 0}` }}>star</span>
+                    <span className="material-symbols-outlined" style={{ fontVariationSettings: `'FILL' ${n <= stars ? 1 : 0}` }}>
+                      star
+                    </span>
                   </button>
                 ))}
               </div>
-              <textarea className="w-full rounded-lg border px-2 py-1.5" placeholder="Comentario (puede ir vacío)" value={comment} onChange={(e) => setComment(e.target.value)} />
+              <textarea
+                className="w-full rounded-lg border px-2 py-1.5"
+                placeholder="Comentario (puede ir vacío)"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+              />
               <label className="block">
                 Foto opcional
-                <input type="file" accept="image/*" onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => setImage(String(reader.result));
-                  reader.readAsDataURL(file);
-                }} />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => setImage(String(reader.result));
+                    reader.readAsDataURL(file);
+                  }}
+                />
               </label>
               {evalDone ? (
                 <p>Evaluación registrada.</p>
               ) : (
-                <button type="button" disabled={busy} className="w-full py-2 bg-secondary text-on-secondary rounded-lg" onClick={() => void sendEval()}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="w-full py-2 bg-secondary text-on-secondary rounded-lg"
+                  onClick={() => void sendEval()}
+                >
                   Enviar evaluación
                 </button>
               )}
             </div>
           )}
 
-          {state === "progreso" && progressText && (
-            <div className="p-4 bg-surface-card rounded-xl border text-xs">{progressText}</div>
+          {canCancel && (
+            <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-2 text-xs">
+              <p>Puedes cancelar {draft.serviceNumber} mientras el supervisor no esté en ruta. El código se conserva si solo corriges datos antes de salir.</p>
+              <button type="button" className="w-full py-2 border rounded-lg" onClick={() => setCancelOpen(true)}>
+                Cancelar solicitud
+              </button>
+              {cancelOpen && (
+                <div className="space-y-2">
+                  {CANCELLATION_REASONS.map((r) => (
+                    <label key={r.id} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="reason"
+                        value={r.id}
+                        checked={cancelReason === r.id}
+                        onChange={() => setCancelReason(r.id)}
+                      />
+                      {r.label}
+                    </label>
+                  ))}
+                  <button type="button" className="w-full py-2 bg-error-container rounded-lg" onClick={() => void doCancel()}>
+                    Confirmar cancelación
+                  </button>
+                </div>
+              )}
+            </div>
           )}
+          {draftLockedByRoute && <p className="text-xs">El supervisor ya está en ruta. Editar y cancelar no están disponibles.</p>}
         </section>
       </div>
     </div>

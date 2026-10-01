@@ -2,47 +2,10 @@
 
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Bot,
-  HardHat,
-  LayoutDashboard,
-  Loader2,
-  X,
-} from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { roleHomePath } from "@/lib/role-routes";
-import type { UserRole } from "@/lib/types";
 import { BrandMark } from "./BrandMark";
-
-const ROLES: {
-  id: UserRole;
-  title: string;
-  hint: string;
-  icon: typeof HardHat;
-  accent: string;
-}[] = [
-  {
-    id: "supervisor",
-    title: "Supervisor",
-    hint: "Visitas en campo",
-    icon: HardHat,
-    accent: "border-secondary/40 hover:border-secondary data-[active=true]:border-secondary data-[active=true]:bg-secondary/10",
-  },
-  {
-    id: "coordinador",
-    title: "Coordinador",
-    hint: "Centro de mando",
-    icon: LayoutDashboard,
-    accent: "border-primary/40 hover:border-primary data-[active=true]:border-primary data-[active=true]:bg-primary/10",
-  },
-  {
-    id: "cliente",
-    title: "Cliente",
-    hint: "Atención con IA",
-    icon: Bot,
-    accent: "border-ai-accent/40 hover:border-ai-accent data-[active=true]:border-ai-accent data-[active=true]:bg-ai-accent/10",
-  },
-];
 
 export function LoginModal({
   open,
@@ -51,12 +14,12 @@ export function LoginModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const { enterDemo, user } = useAuth();
+  const { signIn, user } = useAuth();
   const router = useRouter();
   const titleId = useId();
-  const [role, setRole] = useState<UserRole>("supervisor");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -82,16 +45,17 @@ export function LoginModal({
 
   if (!open) return null;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
+    if (!email.trim() || !password) {
+      setError("Ingresa correo y contraseña.");
+      return;
+    }
     setLoading(true);
-    // Frontend-only demo auth: credentials optional; role drives access.
-    window.setTimeout(() => {
-      enterDemo(role);
-      setLoading(false);
-      onClose();
-      router.push(roleHomePath(role));
-    }, 350);
+    const ok = await signIn(email.trim(), password);
+    setLoading(false);
+    if (!ok) setError("Correo o contraseña incorrectos.");
   }
 
   return (
@@ -127,34 +91,16 @@ export function LoginModal({
               Iniciar sesión
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
-              Elige tu rol e ingresa. Te llevamos directo a la página que te corresponde.
+              Ingresa con tu correo y contraseña. Te llevamos a la página de tu cuenta.
             </p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            {ROLES.map(({ id, title, hint, icon: Icon, accent }) => (
-              <button
-                key={id}
-                type="button"
-                data-active={role === id}
-                onClick={() => setRole(id)}
-                className={`min-w-0 rounded-xl border bg-surface/40 px-2 py-3 text-left transition-all ${accent}`}
-              >
-                <Icon size={18} className="text-text-primary mb-2" />
-                <span className="block text-xs font-semibold text-text-primary break-words">
-                  {title}
-                </span>
-                <span className="block text-[10px] text-text-muted mt-0.5 leading-tight break-words">
-                  {hint}
-                </span>
-              </button>
-            ))}
           </div>
 
           <label className="block text-sm">
             <span className="text-text-secondary">Correo</span>
             <input
               type="email"
+              required
+              autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="usuario@empresa.com"
@@ -166,12 +112,20 @@ export function LoginModal({
             <span className="text-text-secondary">Contraseña</span>
             <input
               type="password"
+              required
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
               className="mt-1.5 w-full rounded-xl border border-border-muted bg-surface px-3 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
             />
           </label>
+
+          {error ? (
+            <p className="text-sm text-status-warning" role="alert">
+              {error}
+            </p>
+          ) : null}
 
           <button
             type="submit"
@@ -187,10 +141,6 @@ export function LoginModal({
               "Entrar a mi espacio"
             )}
           </button>
-
-          <p className="text-[11px] text-text-muted text-center">
-            Demo frontend: el rol seleccionado define el acceso. Credenciales opcionales.
-          </p>
         </form>
       </div>
     </div>

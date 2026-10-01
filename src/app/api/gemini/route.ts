@@ -1,55 +1,66 @@
 import { NextResponse } from "next/server";
-import { puroTurn, type PuroPhase } from "@/lib/ai/puro";
+import { requireRole } from "@/lib/api-auth";
+import { loadClientPicture } from "@/lib/ai/client-context";
+import { puroTurn } from "@/lib/ai/puro";
 import { saveChatTurn } from "@/lib/orders";
+import type { QuoteDraft } from "@/lib/types";
 
-const PHASES = new Set<PuroPhase>(["cotizacion", "progreso", "finalizacion"]);
+async function clientActor(req: Request) {
+  const gate = await requireRole(req, ["cliente"]);
+  if (gate.error) return { error: gate.error };
+  if (!gate.actor.email) {
+    return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
+  }
+  return { actor: gate.actor };
+}
+
+export async function GET(req: Request) {
+  const gate = await clientActor(req);
+  if (gate.error) return gate.error;
+  const picture = await loadClientPicture({
+    email: gate.actor.email!,
+    fullName: gate.actor.fullName,
+  });
+  return NextResponse.json(picture);
+}
 
 export async function POST(req: Request) {
+  const gate = await clientActor(req);
+  if (gate.error) return gate.error;
+
   const body = (await req.json().catch(() => null)) as {
-    phase?: PuroPhase;
     message?: string;
     history?: { role: "user" | "assistant"; content: string }[];
-    draft?: {
-      draftId?: string;
-      serviceNumber?: string;
-      customerName?: string;
-      customerDocument?: string;
-      email?: string;
-      phone?: string;
-      openingMessage?: string;
-      services?: string[];
-      scheduledAt?: string;
-      location?: string;
-      accessNotes?: string;
-    };
-    serviceNumber?: string;
-    editsLocked?: boolean;
+    draft?: Partial<QuoteDraft>;
   } | null;
 
-  const phase = body?.phase && PHASES.has(body.phase) ? body.phase : "cotizacion";
   const message = typeof body?.message === "string" ? body.message : "";
+  const draft: Partial<QuoteDraft> = {
+    ...(body?.draft ?? {}),
+    email: gate.actor.email,
+    customerName: body?.draft?.customerName?.trim() || gate.actor.fullName,
+  };
   const result = await puroTurn({
-    phase,
+    email: gate.actor.email!,
+    fullName: gate.actor.fullName,
     message,
     history: Array.isArray(body?.history) ? body.history : [],
-    draft: body?.draft,
-    serviceNumber: body?.serviceNumber ?? body?.draft?.serviceNumber,
-    editsLocked: body?.editsLocked,
+    draft,
   });
 
   if (message.trim()) {
     await saveChatTurn({
-      draftId: body?.draft?.draftId,
-      serviceNumber: result.progress?.serviceNumber ?? body?.serviceNumber,
-      phase,
+      draftId: draft.draftId,
+      serviceNumber: result.progress?.serviceNumber,
+      phase: result.situation,
       role: "user",
       content: message.slice(0, 2000),
     });
     if (result.reply) {
       await saveChatTurn({
-        draftId: body?.draft?.draftId,
-        serviceNumber: result.progress?.serviceNumber ?? body?.serviceNumber,
-        phase,
+        draftId: draft.draftId,
+        serviceNumber: result.progress?.serviceNumber,
+        phase: result.situation,
         role: "assistant",
         content: result.reply.slice(0, 2000),
       });

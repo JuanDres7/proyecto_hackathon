@@ -82,8 +82,11 @@ export function SupervisorHome() {
                   {services || "Sin tipo"} · {order.location?.trim() || "Sin dirección"}
                 </p>
                 <p className="mt-2 text-xs text-text-muted">
-                  {local ? stepLabel(local) : "Sin iniciar"}
+                  {order.customerName?.trim() || "Sin centro de costo"}
                 </p>
+                <span className="mt-3 inline-flex min-h-11 items-center rounded-lg bg-primary px-3 text-sm font-semibold text-on-primary">
+                  {local?.checkInAt ? stepLabel(local) : "Iniciar visita"}
+                </span>
               </button>
             </li>
           );

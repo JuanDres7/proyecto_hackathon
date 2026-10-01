@@ -1,16 +1,10 @@
+import { loadClientPicture, type ClientPicture, type ClientSituation } from "@/lib/ai/client-context";
 import { generateGeminiJson, type GeminiContent } from "@/lib/ai/gemini";
-import {
-  findServiceCode,
-  heuristicSlots,
-  sanitizeSlots,
-  scrubReply,
-  type QuoteSlots,
-} from "@/lib/ai/slots";
+import { heuristicSlots, sanitizeSlots, scrubReply, type QuoteSlots } from "@/lib/ai/slots";
 import { requiredQuoteFields } from "@/lib/quote-fields";
-import { getOrderByNumber, lookupProgress } from "@/lib/orders";
 import type { QuoteDraft } from "@/lib/types";
 
-export type PuroPhase = "cotizacion" | "progreso" | "finalizacion";
+export type PuroPhase = ClientSituation;
 
 type HistoryTurn = { role: "user" | "assistant"; content: string };
 
@@ -37,15 +31,15 @@ export type PuroTurnResult = {
 };
 
 const SYSTEM = `Eres Puro, el asistente de LimpiApp. Conversas en español, breve y natural, usando el historial.
-Fases: cotización, progreso y finalización.
+La persona no elige una fase. Respondes solo con los HECHOS de los servicios de su correo.
 Reglas:
-- Extrae solo datos que la persona dijo en el último mensaje. Si dijo fecha y hora explícitas, scheduledAt va en ISO de America/Bogota (UTC-5).
+- Extrae datos de la solicitud solo si SITUACION es cotizacion, EDICION_BLOQUEADA es no y CODIGO_AJENO es null. Solo datos que dijo en el último mensaje. Si dijo fecha y hora explícitas, scheduledAt va en ISO de America/Bogota (UTC-5).
 - Servicios permitidos: aseo_general, jardineria, limpieza_piscinas.
 - No inventes un código de servicio, un precio, coordenadas, una fecha u hora que no haya dicho, ni el estado de una visita.
 - El código lo emite el sistema después de un sí explícito al resumen. Tú no lo emites ni confirmas que ya quedó creado.
-- En progreso y finalización, el estado es solo el texto de HECHOS. Si no hay HECHOS, pide el código.
+- El estado de cada servicio es solo el texto de HECHOS. Si CODIGO_AJENO tiene un valor, di que ese código no está entre los servicios de esta cuenta y no describas ese servicio.
 - No digas que guardaste una evaluación: eso lo hace el formulario.
-- Si faltan datos, pregunta por uno o dos, sin repetir el mismo párrafo de rechazo.
+- Si faltan datos de una solicitud nueva, pregunta por uno o dos, sin repetir el mismo párrafo de rechazo.
 Responde solo JSON con reply (string) y, si aplica, customerName, customerDocument, email, phone, openingMessage, services, scheduledAt, location, accessNotes. Usa null cuando no esté en el último mensaje.`;
 
 function draftContext(draft?: Partial<QuoteDraft>) {
@@ -89,81 +83,81 @@ function contentsFrom(history: HistoryTurn[], latest: string): GeminiContent[] {
   return contents;
 }
 
-async function orderIsEnRoute(serviceNumber: string) {
-  const order = await getOrderByNumber(serviceNumber);
-  if (!order) return false;
-  const row = order as { en_route_at?: string | null; enRouteAt?: string | null };
-  return Boolean(row.en_route_at || row.enRouteAt);
+function progressFrom(picture: ClientPicture): PuroTurnResult["progress"] {
+  if (!picture.focus || picture.situation === "cotizacion") return null;
+  return {
+    status: picture.focus.status,
+    message: picture.focus.message,
+    serviceNumber: picture.focus.serviceNumber,
+    visit: picture.focus.visit,
+  };
 }
 
 export async function puroTurn(input: {
-  phase: PuroPhase;
+  email: string;
+  fullName?: string | null;
   message: string;
   history?: HistoryTurn[];
   draft?: Partial<QuoteDraft>;
-  serviceNumber?: string | null;
-  editsLocked?: boolean;
-}): Promise<PuroTurnResult> {
+}): Promise<PuroTurnResult & { situation: ClientSituation; unknownCode: string | null }> {
   const message = input.message.trim();
-  const phase = input.phase;
-  const code = phase === "cotizacion" ? null : findServiceCode(message, input.serviceNumber);
-  let progress: PuroTurnResult["progress"] = null;
-  let editLocked = Boolean(input.editsLocked);
+  const picture = await loadClientPicture({
+    email: input.email,
+    fullName: input.fullName,
+    message,
+  });
+  const situation = picture.situation;
+  const progress = progressFrom(picture);
+  const editLocked = Boolean(picture.focus?.enRoute) && situation !== "cotizacion";
+  const collectQuote = situation === "cotizacion" && !editLocked && !picture.unknownCode;
 
-  if (code && phase !== "cotizacion") {
-    const looked = await lookupProgress(code);
-    const visit = "visit" in looked ? looked.visit ?? null : null;
-    progress = {
-      status: looked.status,
-      message: looked.message,
-      serviceNumber: code,
-      visit,
-    };
-    if (await orderIsEnRoute(code)) editLocked = true;
-  }
-
-  const base: PuroTurnResult = {
+  const base = {
     available: false,
-    reply: null,
+    reply: null as string | null,
     grounded: false,
-    extracted: {},
+    extracted: {} as QuoteSlots,
     editLocked,
     progress,
+    situation,
+    unknownCode: picture.unknownCode,
   };
 
   if (!message) return base;
 
-  if (phase === "progreso" && !progress) {
-    return {
-      ...base,
-      available: true,
-      grounded: true,
-      reply: "Indica el código del servicio, por ejemplo #3000.",
-    };
-  }
+  const factual = picture.unknownCode
+    ? `El código ${picture.unknownCode} no está entre tus servicios.`
+    : progress
+      ? factualReply(progress)
+      : null;
 
-  const factual = progress ? factualReply(progress) : null;
-  if (progress?.status === "sin_servicio_activo") {
-    return { ...base, available: true, grounded: true, reply: progress.message };
-  }
-
-  const facts = progress
-    ? {
-        codigo: progress.serviceNumber,
-        estado: progress.message,
-        actividad: progress.visit?.contractedActivity ?? null,
-        sitio: progress.visit?.siteName ?? null,
-        checkIn: progress.visit?.checkInAt ?? null,
-        checkOut: progress.visit?.checkOutAt ?? null,
-        novedad: progress.visit?.novedad ?? null,
-      }
-    : null;
+  const facts = {
+    situacion: situation,
+    codigoAjeno: picture.unknownCode,
+    enfoque: picture.focus
+      ? {
+          codigo: picture.focus.serviceNumber,
+          estado: picture.focus.message,
+          actividad: picture.focus.visit?.contractedActivity ?? null,
+          sitio: picture.focus.visit?.siteName ?? picture.focus.location,
+          checkIn: picture.focus.visit?.checkInAt ?? null,
+          checkOut: picture.focus.visit?.checkOutAt ?? null,
+          novedad: picture.focus.visit?.novedad ?? null,
+          evaluado: picture.focus.evaluated,
+        }
+      : null,
+    servicios: picture.services.map((service) => ({
+      codigo: service.serviceNumber,
+      estado: service.message,
+      evaluado: service.evaluated,
+    })),
+  };
 
   const latest = [
-    `FASE: ${phase}`,
+    `SITUACION: ${situation}`,
     `EDICION_BLOQUEADA: ${editLocked ? "si" : "no"}`,
-    `BORRADOR: ${JSON.stringify(draftContext(input.draft))}`,
-    `HECHOS: ${facts ? JSON.stringify(facts) : "ninguno"}`,
+    `CODIGO_AJENO: ${picture.unknownCode ?? "null"}`,
+    `BORRADOR: ${JSON.stringify(draftContext({ ...input.draft, email: input.email, customerName: input.draft?.customerName || input.fullName || undefined }))}`,
+    `HECHOS: ${JSON.stringify(facts)}`,
     `ULTIMO_MENSAJE: ${message}`,
   ].join("\n");
 
@@ -172,29 +166,25 @@ export async function puroTurn(input: {
     contents: contentsFrom(input.history ?? [], latest),
   });
 
-  const allowedCodes = [input.draft?.serviceNumber, progress?.serviceNumber].filter(
-    (value): value is string => Boolean(value?.startsWith("#")),
-  );
+  const allowedCodes = picture.services.map((service) => service.serviceNumber);
 
   if (!model.ok) {
-    const extracted = phase === "cotizacion" && !editLocked ? heuristicSlots(message) : {};
     return {
       ...base,
-      extracted,
-      reply: factual,
+      available: Boolean(factual),
       grounded: Boolean(factual),
+      extracted: collectQuote ? heuristicSlots(message) : {},
+      reply: factual,
     };
   }
 
   const reply = scrubReply(model.data.reply ?? "", allowedCodes);
-  const extracted =
-    phase === "cotizacion" && !editLocked ? sanitizeSlots(model.data, message) : {};
   return {
     ...base,
     available: true,
     grounded: !reply && Boolean(factual),
     reply: reply || factual,
-    extracted,
+    extracted: collectQuote ? sanitizeSlots(model.data, message) : {},
   };
 }
 

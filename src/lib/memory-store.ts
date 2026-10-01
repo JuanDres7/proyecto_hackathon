@@ -94,6 +94,10 @@ export const memory = {
     s.seq += 1;
     return `#${n}`;
   },
+  reserveAfter(code: number) {
+    const s = store();
+    if (s.seq <= code) s.seq = code + 1;
+  },
   orders: {
     all: () => store().orders,
     upsert(order: MemoryOrder) {

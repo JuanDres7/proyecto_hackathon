@@ -3,9 +3,18 @@ import { requireRole } from "@/lib/api-auth";
 import { listConfirmedServices } from "@/lib/orders";
 
 export async function GET(req: Request) {
-  const gate = await requireRole(req, ["supervisor", "coordinador"]);
+  const gate = await requireRole(req, ["supervisor", "coordinador", "cliente"]);
   if (gate.error) return gate.error;
-  const rows = await listConfirmedServices();
+  if (gate.actor.role === "cliente" && !gate.actor.email) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const rows = await listConfirmedServices(
+    gate.actor.role === "cliente"
+      ? { email: gate.actor.email }
+      : gate.actor.role === "supervisor"
+        ? { supervisorId: gate.actor.id }
+        : undefined,
+  );
   return NextResponse.json({
     services: rows.map((r) => ({
       serviceNumber: r.service_number,

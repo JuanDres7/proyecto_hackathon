@@ -13,35 +13,11 @@ import type { SessionUser, UserRole } from "./types";
 
 const STORAGE_KEY = "campo.session";
 
-const DEMO_USERS: Record<UserRole, SessionUser> = {
-  supervisor: {
-    id: "demo-supervisor",
-    email: "supervisor@campo.local",
-    fullName: "Ana Supervisor",
-    role: "supervisor",
-    demo: true,
-  },
-  coordinador: {
-    id: "demo-coordinador",
-    email: "coordinador@campo.local",
-    fullName: "Carlos Coordinador",
-    role: "coordinador",
-    demo: true,
-  },
-  cliente: {
-    id: "demo-cliente",
-    email: "cliente@campo.local",
-    fullName: "Cliente público",
-    role: "cliente",
-    demo: true,
-  },
-};
-
 type AuthContextValue = {
   user: SessionUser | null;
   loading: boolean;
   supabaseReady: boolean;
-  enterDemo: (role: UserRole) => void;
+  signIn: (email: string, password: string) => Promise<boolean>;
   signOut: () => Promise<void>;
 };
 
@@ -57,17 +33,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     async function initAuth() {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
+      const stored = raw ? (JSON.parse(raw) as SessionUser) : null;
+      if (stored?.demo || stored?.id.startsWith("demo-")) {
         if (active) {
-          const session = JSON.parse(raw) as SessionUser;
-          setUser(session);
+          setUser(stored);
           setLoading(false);
-          void fetch("/api/session", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: session.id, role: session.role, fullName: session.fullName }),
-          });
+        }
+        const restored = await fetch("/api/session", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: stored.id }),
+        });
+        if (!active) return;
+        if (!restored.ok) {
+          localStorage.removeItem(STORAGE_KEY);
+          setUser(null);
+          return;
+        }
+        const json = (await restored.json()) as { user?: SessionUser };
+        if (json.user) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(json.user));
+          setUser(json.user);
         }
         return;
       }
@@ -106,16 +93,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const enterDemo = useCallback((role: UserRole) => {
-    const next = DEMO_USERS[role];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    setUser(next);
-    void fetch("/api/session", {
+  const signIn = useCallback(async (email: string, password: string) => {
+    const supabase = createClient();
+    if (supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (!error && data.user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name, role")
+          .eq("id", data.user.id)
+          .maybeSingle();
+        const next: SessionUser = {
+          id: data.user.id,
+          email: data.user.email ?? email,
+          fullName: profile?.full_name ?? "Usuario",
+          role: (profile?.role as UserRole) ?? "supervisor",
+          demo: false,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        setUser(next);
+        return true;
+      }
+      await supabase.auth.signOut();
+    }
+
+    const res = await fetch("/api/session", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: next.id, role: next.role, fullName: next.fullName }),
+      body: JSON.stringify({ email, password }),
     });
+    if (!res.ok) return false;
+    const json = (await res.json()) as { user?: SessionUser };
+    if (!json.user) return false;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(json.user));
+    setUser(json.user);
+    return true;
   }, []);
 
   const signOut = useCallback(async () => {
@@ -127,8 +140,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, supabaseReady, enterDemo, signOut }),
-    [user, loading, supabaseReady, enterDemo, signOut],
+    () => ({ user, loading, supabaseReady, signIn, signOut }),
+    [user, loading, supabaseReady, signIn, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

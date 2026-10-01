@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/api-auth";
 import { ordersBodySchema } from "@/lib/schemas";
 import {
   cancelOrder,
+  clientOwnsService,
   confirmDraft,
   requiredQuoteFields,
   saveChatTurn,
@@ -26,6 +27,16 @@ export async function POST(req: Request) {
     ...body.draft,
     services: sanitizeServices(body.draft.services),
   };
+
+  if (gate.actor.role === "cliente") {
+    if (!gate.actor.email) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    draft.email = gate.actor.email;
+    if (!draft.customerName?.trim() && gate.actor.fullName) draft.customerName = gate.actor.fullName;
+    if ((body.action === "cancel" || body.action === "pay") && draft.serviceNumber) {
+      const owns = await clientOwnsService(gate.actor.email, draft.serviceNumber);
+      if (!owns) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+  }
 
   if (body.action === "pay") {
     if (!draft.serviceNumber) {
