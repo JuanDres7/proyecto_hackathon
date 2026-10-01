@@ -5,7 +5,6 @@ import { LandingNav } from "./LandingNav";
 import { HeroSection } from "./HeroSection";
 import { AboutSection } from "./AboutSection";
 import { ServicesSection } from "./ServicesSection";
-import { ImpactSection } from "./ImpactSection";
 import { ContactSection } from "./ContactSection";
 import { LandingFooter } from "./LandingFooter";
 import { LoginModal } from "./LoginModal";
@@ -20,7 +19,6 @@ export function LandingPage() {
         <HeroSection onLogin={() => setLoginOpen(true)} />
         <AboutSection />
         <ServicesSection />
-        <ImpactSection />
         <ContactSection />
       </main>
       <LandingFooter />

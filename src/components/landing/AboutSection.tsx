@@ -25,10 +25,10 @@ export function AboutSection() {
       <div className="relative max-w-6xl mx-auto px-5">
         <div className="max-w-2xl">
           <p className="text-sm font-semibold tracking-wide text-primary uppercase">
-            Quiénes somos
+            Nosotros
           </p>
           <h2 className="mt-3 font-display text-3xl md:text-4xl font-semibold text-text-primary tracking-tight">
-            Sobre FieldOps
+            Quiénes somos y por qué existimos
           </h2>
           <p className="mt-4 text-text-secondary text-base md:text-lg leading-relaxed">
             Somos la plataforma que conecta supervisores en campo, coordinadores
