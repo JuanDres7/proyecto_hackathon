@@ -1,4 +1,4 @@
-# CampoSync — Supervisión inteligente de servicios en campo
+# LimpiAPP — Supervisión inteligente de servicios en campo
 
 PWA única (Next.js App Router) con tres módulos por rol, almacenamiento offline y un microservicio de NLP.
 

@@ -280,11 +280,18 @@ export function ClientChat() {
   return (
     <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4 bg-surface-card rounded-xl border border-border-subtle shadow-md">
-        <div>
-          <p className="text-sm font-semibold text-text-primary">Chat del cliente LimpiApp</p>
-          <p className="text-xs text-text-secondary mt-1">
-            {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin código (borrador)"}
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-lg bg-surface-container-high border border-border-subtle flex items-center justify-center text-primary shrink-0">
+            <span className="material-symbols-outlined text-[22px]">smart_toy</span>
+          </div>
+          <div className="flex flex-col min-w-0">
+            <span className="text-sm font-semibold text-text-primary tracking-tight">
+              Portal Cliente LimpiAPP
+            </span>
+            <p className="text-xs text-text-secondary mt-0.5">
+              {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin código (borrador)"}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-1 p-1 bg-surface-container-lowest rounded-xl border border-border-subtle">
           {STATES.map((st) => (

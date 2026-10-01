@@ -1,16 +1,6 @@
-import { Suspense } from "react";
-import LoginPage from "./login-client";
+import { redirect } from "next/navigation";
 
-export default function Page() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center bg-surface text-text-secondary text-sm">
-          Cargando acceso…
-        </div>
-      }
-    >
-      <LoginPage />
-    </Suspense>
-  );
+/** La selección de roles en página dedicada se eliminó: el acceso es desde el inicio. */
+export default function LoginRedirectPage() {
+  redirect("/?login=1");
 }
