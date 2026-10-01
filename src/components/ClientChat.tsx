@@ -1,205 +1,223 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { ChatMessage, ChatState } from "@/lib/types";
+import { useState } from "react";
+import { useClientChat } from "@/hooks/useClientChat";
+import {
+  CANCEL_LABELS,
+  SERVICE_CODES,
+  SERVICE_LABELS,
+  type CancellationReason,
+  type QuoteSlots,
+  type ServiceCode,
+} from "@/lib/client-chat/types";
 
-const STATES: { id: ChatState; label: string; hint: string }[] = [
-  {
-    id: "cotizacion",
-    label: "1. Cotización",
-    hint: "Describe el servicio. Al confirmar, se simula el pago y se emite un número de servicio.",
-  },
-  {
-    id: "seguimiento",
-    label: "2. Seguimiento",
-    hint: "Consulta el estado con tu número de servicio (ej. SRV-...).",
-  },
-  {
-    id: "cierre",
-    label: "3. Cierre y quejas",
-    hint: "Envía retroalimentación o una queja. Puedes adjuntar una foto; Gemini Vision + NLP la validan.",
-  },
-];
+const PHASES = [
+  { id: "cotizacion", label: "1. Cotización" },
+  { id: "progreso", label: "2. Progreso" },
+  { id: "finalizacion", label: "3. Finalización" },
+] as const;
 
 export function ClientChat() {
-  const [state, setState] = useState<ChatState>("cotizacion");
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content:
-        "Hola. Puedo cotizar un servicio, dar seguimiento o recibir una queja con evidencia.",
-      createdAt: new Date().toISOString(),
-    },
-  ]);
-  const [input, setInput] = useState("");
-  const [image, setImage] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const [serviceNumber, setServiceNumber] = useState("");
+  const chat = useClientChat();
+  const [slots, setSlots] = useState<QuoteSlots>({
+    customerName: "",
+    customerDocument: "",
+    email: "",
+    phone: "",
+    openingMessage: "",
+    services: [],
+    scheduledAt: "",
+    location: "",
+    accessNotes: "",
+  });
+  const [lookup, setLookup] = useState("");
+  const [comment, setComment] = useState("");
+  const [rating, setRating] = useState(5);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [reason, setReason] = useState<CancellationReason>("data_error");
 
-  const hint = useMemo(
-    () => STATES.find((s) => s.id === state)?.hint ?? "",
-    [state],
-  );
-
-  async function send() {
-    if (!input.trim() && !image) return;
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: input.trim(),
-      imageDataUrl: image,
-      createdAt: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setBusy(true);
-    try {
-      const geminiRes = await fetch("/api/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          state,
-          messages: [...messages, userMsg].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          image,
-          serviceNumber: serviceNumber || undefined,
-        }),
-      });
-      const gemini = (await geminiRes.json()) as {
-        reply: string;
-        serviceNumber?: string;
+  function toggleService(code: ServiceCode) {
+    setSlots((current) => {
+      const has = current.services.includes(code);
+      return {
+        ...current,
+        services: has ? current.services.filter((item) => item !== code) : [...current.services, code],
       };
-      if (gemini.serviceNumber) setServiceNumber(gemini.serviceNumber);
-
-      let extra = "";
-      if (state === "cierre" && userMsg.content) {
-        const nlpRes = await fetch("/api/nlp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: userMsg.content,
-            serviceNumber: gemini.serviceNumber ?? serviceNumber,
-          }),
-        });
-        const nlp = (await nlpRes.json()) as { label?: string; confidence?: number };
-        extra = nlp.label
-          ? `\n\nClasificación NLP: ${nlp.label} (${Math.round((nlp.confidence ?? 0) * 100)}%).`
-          : "";
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `${gemini.reply}${extra}`,
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      setImage(undefined);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: "No pude contactar el proxy. Revisa Gemini / NLP o usa el modo demo del servidor.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   return (
     <div className="mx-auto grid max-w-3xl gap-4 lg:grid-cols-[220px_1fr]">
       <aside className="space-y-2">
-        {STATES.map((item) => (
+        {PHASES.map((item) => (
           <button
             key={item.id}
             type="button"
-            onClick={() => setState(item.id)}
+            onClick={() => chat.setPhase(item.id)}
             className={`w-full rounded-xl px-3 py-2 text-left text-sm ${
-              state === item.id
-                ? "bg-teal-600 text-white"
-                : "bg-white text-slate-700 shadow-sm"
+              chat.phase === item.id ? "bg-teal-600 text-white" : "bg-white text-slate-700 shadow-sm"
             }`}
           >
             {item.label}
           </button>
         ))}
-        {serviceNumber ? (
+        {chat.serviceNumber ? (
           <p className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">
-            Número de servicio: <strong>{serviceNumber}</strong>
+            Código de servicio: <strong>{chat.serviceNumber}</strong>
           </p>
         ) : null}
       </aside>
 
       <section className="flex min-h-[70vh] flex-col rounded-2xl bg-white shadow-sm">
-        <div className="border-b px-4 py-3 text-sm text-slate-500">{hint}</div>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
-          {messages.map((msg) => (
+          {chat.messages.map((msg) => (
             <div
               key={msg.id}
               className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
-                msg.role === "user"
-                  ? "ml-auto bg-teal-600 text-white"
-                  : "bg-slate-100 text-slate-800"
+                msg.role === "user" ? "ml-auto bg-teal-600 text-white" : "bg-slate-100 text-slate-800"
               }`}
             >
-              {msg.imageDataUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={msg.imageDataUrl} alt="" className="mb-2 max-h-40 rounded-lg" />
-              ) : null}
               {msg.content}
             </div>
           ))}
-        </div>
-        <div className="space-y-2 border-t p-3">
-          {state === "cierre" ? (
-            <input
-              type="file"
-              accept="image/*"
-              className="text-xs"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => setImage(String(reader.result));
-                reader.readAsDataURL(file);
-              }}
-            />
+          {chat.phase === "finalizacion" && chat.activities.length > 0 ? (
+            <ul className="list-disc pl-5 text-sm text-slate-700">
+              {chat.activities.map((activity) => (
+                <li key={activity}>{activity}</li>
+              ))}
+            </ul>
           ) : null}
-          <div className="flex gap-2">
-            <input
-              className="flex-1 rounded-lg border px-3 py-2 text-sm"
-              placeholder={
-                state === "seguimiento"
-                  ? "¿Cuál es el estado de SRV-...?"
-                  : "Escribe tu mensaje"
-              }
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
+          {chat.phase === "finalizacion"
+            ? chat.photos.map((item) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={item.url} src={item.url} alt={item.label} className="max-h-40 rounded-lg" />
+              ))
+            : null}
+        </div>
+
+        <div className="space-y-3 border-t p-3">
+          {chat.phase === "cotizacion" ? (
+            <form
+              className="grid gap-2 sm:grid-cols-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void chat.send({
+                  slots,
+                  display: "Envié los datos de la cotización.",
+                });
               }}
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void send()}
-              className="rounded-lg bg-[#0b1f3a] px-4 py-2 text-sm text-white disabled:opacity-50"
             >
-              {busy ? "..." : "Enviar"}
-            </button>
-          </div>
+              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Nombre" value={slots.customerName} onChange={(e) => setSlots({ ...slots, customerName: e.target.value })} />
+              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Identificación" value={slots.customerDocument} onChange={(e) => setSlots({ ...slots, customerDocument: e.target.value })} />
+              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Email" value={slots.email} onChange={(e) => setSlots({ ...slots, email: e.target.value })} />
+              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Teléfono" value={slots.phone} onChange={(e) => setSlots({ ...slots, phone: e.target.value })} />
+              <input className="rounded-lg border px-3 py-2 text-sm sm:col-span-2" placeholder="Mensaje" value={slots.openingMessage} onChange={(e) => setSlots({ ...slots, openingMessage: e.target.value })} />
+              <div className="flex flex-wrap gap-2 sm:col-span-2">
+                {SERVICE_CODES.map((code) => (
+                  <label key={code} className="flex items-center gap-1 text-sm">
+                    <input type="checkbox" checked={slots.services.includes(code)} onChange={() => toggleService(code)} />
+                    {SERVICE_LABELS[code]}
+                  </label>
+                ))}
+              </div>
+              <input className="rounded-lg border px-3 py-2 text-sm" type="datetime-local" value={slots.scheduledAt} onChange={(e) => setSlots({ ...slots, scheduledAt: e.target.value })} />
+              <input className="rounded-lg border px-3 py-2 text-sm" placeholder="Ubicación" value={slots.location} onChange={(e) => setSlots({ ...slots, location: e.target.value })} />
+              <input className="rounded-lg border px-3 py-2 text-sm sm:col-span-2" placeholder="Observaciones de acceso" value={slots.accessNotes} onChange={(e) => setSlots({ ...slots, accessNotes: e.target.value })} />
+              <button type="submit" disabled={chat.busy} className="rounded-lg bg-[#0b1f3a] px-4 py-2 text-sm text-white disabled:opacity-50 sm:col-span-2">
+                {chat.busy ? "..." : "Continuar"}
+              </button>
+            </form>
+          ) : null}
+
+          {chat.phase === "cotizacion" && chat.awaitingConfirmation ? (
+            <div className="flex gap-2">
+              <button type="button" disabled={chat.busy} className="rounded-lg bg-teal-600 px-4 py-2 text-sm text-white" onClick={() => void chat.send({ confirmation: "yes", display: "Sí" })}>
+                Sí
+              </button>
+              <button type="button" disabled={chat.busy} className="rounded-lg border px-4 py-2 text-sm" onClick={() => void chat.send({ confirmation: "no", display: "No" })}>
+                No
+              </button>
+            </div>
+          ) : null}
+
+          {chat.phase === "cotizacion" && chat.canCancel ? (
+            <div className="flex gap-2">
+              <select className="rounded-lg border px-3 py-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value as CancellationReason)}>
+                {Object.entries(CANCEL_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+              <button type="button" disabled={chat.busy} className="rounded-lg border px-4 py-2 text-sm" onClick={() => void chat.send({ cancellationReason: reason, display: "Quiero cancelar" })}>
+                Cancelar servicio
+              </button>
+            </div>
+          ) : null}
+
+          {chat.phase === "progreso" ? (
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                chat.setServiceNumber(lookup.trim());
+                void chat.send({ serviceNumber: lookup.trim(), message: lookup.trim(), display: lookup.trim() });
+              }}
+            >
+              <input className="flex-1 rounded-lg border px-3 py-2 text-sm" placeholder="Código #3089" value={lookup} onChange={(e) => setLookup(e.target.value)} />
+              <button type="submit" disabled={chat.busy} className="rounded-lg bg-[#0b1f3a] px-4 py-2 text-sm text-white disabled:opacity-50">
+                Consultar
+              </button>
+            </form>
+          ) : null}
+
+          {chat.phase === "finalizacion" ? (
+            <form
+              className="space-y-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void chat.send({
+                  rating,
+                  message: comment,
+                  photoDataUrl: photo,
+                  display: `Calificación: ${rating} estrellas`,
+                });
+              }}
+            >
+              <div className="flex gap-2">
+              <input className="flex-1 rounded-lg border px-3 py-2 text-sm" placeholder="Código #3089" value={lookup} onChange={(e) => setLookup(e.target.value)} />
+              <button
+                type="button"
+                disabled={chat.busy}
+                className="rounded-lg border px-4 py-2 text-sm"
+                onClick={() => {
+                  chat.setServiceNumber(lookup.trim());
+                  void chat.send({ serviceNumber: lookup.trim(), display: `Consultar cierre ${lookup.trim()}` });
+                }}
+              >
+                Ver cierre
+              </button>
+            </div>
+            <label className="block text-sm">
+                Estrellas
+                <input className="ml-2 w-16 rounded border px-2 py-1" type="number" min={1} max={5} value={rating} onChange={(e) => setRating(Number(e.target.value))} />
+              </label>
+              <textarea className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="Comentario" value={comment} onChange={(e) => setComment(e.target.value)} />
+              <input
+                type="file"
+                accept="image/*"
+                className="text-xs"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setPhoto(String(reader.result));
+                  reader.readAsDataURL(file);
+                }}
+              />
+              <button type="submit" disabled={chat.busy} className="rounded-lg bg-[#0b1f3a] px-4 py-2 text-sm text-white disabled:opacity-50">
+                Enviar evaluación
+              </button>
+            </form>
+          ) : null}
         </div>
       </section>
     </div>

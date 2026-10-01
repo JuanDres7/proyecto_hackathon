@@ -45,12 +45,22 @@ function seedIfEmpty(supervisorId: string) {
 export function SupervisorHome() {
   const { user } = useAuth();
   const [visits, setVisits] = useState<LocalVisit[]>([]);
+  const [orders, setOrders] = useState<{ serviceNumber: string; location: string; services: string[] }[]>([]);
   const [siteName, setSiteName] = useState("");
   const [activity, setActivity] = useState("");
 
   async function refresh() {
     const rows = await db.visits.orderBy("updatedAt").reverse().toArray();
     setVisits(rows);
+    try {
+      const res = await fetch("/api/service-orders");
+      const data = (await res.json()) as {
+        orders?: { serviceNumber: string; location: string; services: string[] }[];
+      };
+      setOrders(data.orders ?? []);
+    } catch {
+      setOrders([]);
+    }
   }
 
   useEffect(() => {
@@ -104,6 +114,20 @@ export function SupervisorHome() {
           Guardar localmente
         </button>
       </form>
+
+      {orders.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className="font-semibold">Servicios confirmados</h2>
+          <ul className="space-y-2">
+            {orders.map((order) => (
+              <li key={order.serviceNumber} className="rounded-2xl bg-white p-4 text-sm shadow-sm">
+                <p className="font-medium">Servicio {order.serviceNumber}</p>
+                <p className="text-slate-500">{order.location || "Sin ubicación"}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <ul className="space-y-3">
         {visits.map((visit) => (

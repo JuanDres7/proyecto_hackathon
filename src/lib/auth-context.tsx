@@ -55,15 +55,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      setUser(JSON.parse(raw) as SessionUser);
-      setLoading(false);
-      return;
+      const parsed = JSON.parse(raw) as SessionUser;
+      const timer = window.setTimeout(() => {
+        setUser(parsed);
+        setLoading(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
     const supabase = createClient();
     if (!supabase) {
-      setLoading(false);
-      return;
+      const timer = window.setTimeout(() => setLoading(false), 0);
+      return () => window.clearTimeout(timer);
     }
 
     supabase.auth.getUser().then(async ({ data }) => {

@@ -3,16 +3,42 @@ from pydantic import BaseModel
 
 app = FastAPI(title="CampoSync NLP", version="0.1.0")
 
-LABELS = [
-    "inasistencia",
-    "calidad",
-    "conducta",
-    "facturacion",
-    "seguridad",
-    "general",
-]
+EXEMPLARS = {
+    "inasistencia": [
+        "el supervisor no llegó al centro de costo",
+        "nadie se presentó a realizar el servicio",
+        "estuvieron ausentes y no hubo visita",
+    ],
+    "calidad": [
+        "dejaron el baño sucio y el trabajo incompleto",
+        "la limpieza quedó mal hecha",
+        "no terminaron las zonas que contratamos",
+    ],
+    "conducta": [
+        "el trato del personal fue grosero",
+        "hubo maltrato hacia quien recibió el servicio",
+        "la conducta del supervisor fue irrespetuosa",
+    ],
+    "facturacion": [
+        "el cobro no corresponde a lo acordado",
+        "me están facturando de más",
+        "el precio del servicio está mal",
+    ],
+    "seguridad": [
+        "hubo un riesgo para las personas en el sitio",
+        "faltaron elementos de seguridad durante el trabajo",
+        "la situación en campo no era segura",
+    ],
+    "general": [
+        "quiero dejar un comentario sobre el servicio",
+        "tengo una observación general",
+        "solo quiero registrar cómo nos fue",
+    ],
+}
 
 _model = None
+_vectors = None
+_owners: list[str] = []
 
 
 class ClassifyIn(BaseModel):
@@ -21,16 +47,20 @@ class ClassifyIn(BaseModel):
 
 
 def get_model():
-    global _model
+    global _model, _vectors, _owners
     if _model is None:
         from sentence_transformers import SentenceTransformer
 
         _model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        texts: list[str] = []
+        owners: list[str] = []
+        for label, phrases in EXEMPLARS.items():
+            for phrase in phrases:
+                texts.append(phrase)
+                owners.append(label)
+        _vectors = _model.encode(texts, normalize_embeddings=True)
+        _owners = owners
     return _model
-
-
-def embed_labels(model):
-    return model.encode(LABELS, normalize_embeddings=True)
 
 
 @app.get("/health")
@@ -41,15 +71,17 @@ def health():
 @app.post("/classify")
 def classify(payload: ClassifyIn):
     model = get_model()
-    import numpy as np
-
-    vectors = embed_labels(model)
     query = model.encode([payload.text], normalize_embeddings=True)[0]
-    scores = vectors @ query
-    idx = int(np.argmax(scores))
+    scores = _vectors @ query
+    best_by_label: dict[str, float] = {}
+    for score, label in zip(scores, _owners):
+        value = float(score)
+        if label not in best_by_label or value > best_by_label[label]:
+            best_by_label[label] = value
+    label = max(best_by_label, key=best_by_label.get)
     return {
-        "label": LABELS[idx],
-        "confidence": float(scores[idx]),
+        "label": label,
+        "confidence": best_by_label[label],
         "serviceNumber": payload.serviceNumber,
         "source": "sentence-transformers",
     }

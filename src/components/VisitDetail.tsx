@@ -24,7 +24,19 @@ export function VisitDetail({ visitId }: { visitId: string }) {
   }
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void db.visits.get(visitId).then((row) => {
+      if (cancelled) return;
+      setVisit(row ?? null);
+      setNovedad(row?.novedad ?? "");
+      setNotes(row?.notes ?? "");
+    });
+    void db.evidence.where("visitId").equals(visitId).toArray().then((items) => {
+      if (!cancelled) setPhotos(items);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [visitId]);
 
   async function save(patch: Partial<LocalVisit>) {
@@ -179,8 +191,11 @@ function PhotoThumb({ blob }: { blob: Blob }) {
   const [url, setUrl] = useState<string>("");
   useEffect(() => {
     const next = URL.createObjectURL(blob);
-    setUrl(next);
-    return () => URL.revokeObjectURL(next);
+    const timer = window.setTimeout(() => setUrl(next), 0);
+    return () => {
+      window.clearTimeout(timer);
+      URL.revokeObjectURL(next);
+    };
   }, [blob]);
   if (!url) return <div className="aspect-square rounded-lg bg-slate-200" />;
   return (
