@@ -65,28 +65,14 @@ function draftContext(draft?: Partial<QuoteDraft>) {
 }
 
 function contentsFrom(history: HistoryTurn[], latest: string): GeminiContent[] {
-  const turns: HistoryTurn[] = [
-    ...history.slice(-10).map((turn) => ({
-      role: turn.role,
-      content: turn.content.slice(0, 1500),
-    })),
-    { role: "user", content: latest.slice(0, 4000) },
-  ];
-  const contents: GeminiContent[] = [];
-  for (const turn of turns) {
-    const role = turn.role === "assistant" ? "model" : "user";
-    const last = contents[contents.length - 1];
-    if (last && last.role === role) {
-      const part = last.parts[0];
-      if (part && "text" in part) part.text = `${part.text}\n${turn.content}`;
-    } else {
-      contents.push({ role, parts: [{ text: turn.content }] });
-    }
-  }
-  if (contents[0]?.role === "model") {
-    contents.unshift({ role: "user", parts: [{ text: "Hola." }] });
-  }
-  return contents;
+  const previous = history
+    .slice(-8)
+    .map((turn) => `${turn.role === "assistant" ? "Puro" : "Cliente"}: ${turn.content.slice(0, 800)}`)
+    .join("\n");
+  const text = [previous ? `Conversación previa:\n${previous}` : "", latest.slice(0, 4000)]
+    .filter(Boolean)
+    .join("\n\n");
+  return [{ role: "user", parts: [{ text }] }];
 }
 
 async function orderIsEnRoute(serviceNumber: string) {

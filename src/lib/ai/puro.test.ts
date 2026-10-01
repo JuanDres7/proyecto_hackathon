@@ -50,6 +50,40 @@ describe("Puro llama a Gemini", () => {
     expect(sent).toContain("#3089");
     expect(result.available).toBe(true);
     expect(result.reply).toContain("#3089");
+    expect(body.contents).toEqual([{ role: "user", parts: [{ text: expect.any(String) }] }]);
+  });
+
+  it("sigue llamando a Gemini en el segundo mensaje sin reenviar turnos del modelo", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    ensureDemoShowcase();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ reply: "¿En qué dirección?" }) }] } }],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await puroTurn({
+      phase: "cotizacion",
+      message: "Quiero cotizar un aseo",
+      email: "cliente@limpiapp.co",
+      history: [
+        { role: "assistant", content: "Hola, soy Puro." },
+        { role: "user", content: "HOLAASDAKJSDBASKJDAS" },
+        { role: "assistant", content: "¿En qué te puedo colaborar?" },
+      ],
+    });
+
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(call[1].body));
+    expect(body.contents).toHaveLength(1);
+    expect(body.contents[0].role).toBe("user");
+    expect(body.contents[0].parts[0].text).toContain("Quiero cotizar un aseo");
+    expect(body.contents[0].parts[0].text).toContain("¿En qué te puedo colaborar?");
   });
 
   it("muestra el error de Gemini en lugar de ocultarlo", async () => {
