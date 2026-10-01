@@ -36,9 +36,8 @@ export function BrandMark({
         </svg>
       </div>
       {showWordmark && (
-        <span className={`font-display font-semibold tracking-tight text-text-primary ${word}`}>
-          FieldOps
-          <span className="ml-1.5 text-primary font-medium">AI</span>
+        <span className={`font-display font-semibold tracking-tight text-white ${word}`}>
+          Limpi<span className="text-primary">APP</span>
         </span>
       )}
     </div>

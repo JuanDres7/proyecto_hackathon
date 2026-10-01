@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { BrandMark } from "./BrandMark";
 
 export function LandingFooter() {
@@ -25,13 +24,13 @@ export function LandingFooter() {
           <a href="#contacto" className="hover:text-primary transition-colors">
             Contacto
           </a>
-          <Link href="/login" className="hover:text-primary transition-colors">
+          <a href="/?login=1" className="hover:text-primary transition-colors">
             Acceso
-          </Link>
+          </a>
         </div>
       </div>
       <div className="border-t border-border-subtle px-5 py-4 text-center text-xs text-text-muted">
-        © {new Date().getFullYear()} FieldOps AI · Todos los derechos reservados
+        © {new Date().getFullYear()} LimpiAPP · Todos los derechos reservados
       </div>
     </footer>
   );

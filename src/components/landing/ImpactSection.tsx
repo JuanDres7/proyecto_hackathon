@@ -42,7 +42,7 @@ export function ImpactSection() {
             Valor medible para la operación
           </h2>
           <p className="mt-4 text-text-secondary text-base md:text-lg leading-relaxed">
-            FieldOps convierte la supervisión en campo en indicadores claros de
+            LimpiAPP convierte la supervisión en campo en indicadores claros de
             cumplimiento, continuidad y atención al cliente.
           </p>
         </div>
