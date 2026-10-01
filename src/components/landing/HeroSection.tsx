@@ -65,7 +65,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
         <div className="absolute inset-0">
           <Image
             src="/stitch/supervisor_preview.png"
-            alt="Supervisión de servicios en campo con FieldOps"
+            alt="Supervisión de servicios en campo con LimpiAPP"
             fill
             priority
             className="object-cover object-center"
@@ -90,7 +90,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
             </h1>
 
             <p className="mt-5 text-base md:text-lg text-text-secondary max-w-xl leading-relaxed">
-              FieldOps unifica supervisión, coordinación y atención al cliente en
+              LimpiAPP unifica supervisión, coordinación y atención al cliente en
               una sola experiencia. Menos incertidumbre en campo, más control
               operativo y mejor servicio para quien contrata.
             </p>
@@ -126,7 +126,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
               Una sola plataforma para operar, supervisar y atender
             </h2>
             <p className="mt-3 text-text-secondary leading-relaxed">
-              FieldOps está pensada para empresas de servicios que necesitan
+              LimpiAPP está pensada para empresas de servicios que necesitan
               demostrar cumplimiento, reducir fricción con el cliente y dar
               herramientas claras a quienes trabajan en territorio.
             </p>
@@ -153,7 +153,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
 
           <div className="mt-14">
             <h3 className="font-display text-xl font-semibold text-text-primary">
-              ¿Para quién es FieldOps?
+              ¿Para quién es LimpiAPP?
             </h3>
             <p className="mt-2 text-sm text-text-secondary max-w-xl">
               Al iniciar sesión, entras directo al espacio que corresponde a tu rol.

@@ -27,7 +27,7 @@ export function ContactSection() {
                 <span className="w-9 h-9 rounded-lg bg-primary/15 text-primary flex items-center justify-center">
                   <Mail size={16} />
                 </span>
-                contacto@fieldops.ai
+                contacto@limpiapp.com
               </li>
               <li className="flex items-center gap-3 text-sm text-text-secondary">
                 <span className="w-9 h-9 rounded-lg bg-secondary/15 text-secondary flex items-center justify-center">

@@ -1,5 +1,5 @@
-const CACHE = "fieldops-landing-v2";
-const APP_SHELL = ["/", "/login", "/manifest.webmanifest"];
+const CACHE = "limpiapp-v3";
+const APP_SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

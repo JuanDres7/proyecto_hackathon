@@ -18,7 +18,7 @@ export function RoleGate({
   useEffect(() => {
     if (loading) return;
     if (!user) {
-      router.replace(`/login?next=/${role}`);
+      router.replace("/?login=1");
       return;
     }
     if (user.role !== role) {
@@ -28,7 +28,7 @@ export function RoleGate({
 
   if (loading || !user || user.role !== role) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center text-sm text-slate-500">
+      <div className="flex min-h-[50vh] items-center justify-center text-sm text-white/70">
         Verificando rol...
       </div>
     );

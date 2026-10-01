@@ -31,7 +31,7 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
       }`}
     >
       <div className="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between gap-4">
-        <a href="#inicio" className="shrink-0" aria-label="FieldOps inicio">
+        <a href="#inicio" className="shrink-0" aria-label="LimpiAPP inicio">
           <BrandMark size="sm" />
         </a>
 

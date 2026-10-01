@@ -1,10 +1,10 @@
 {
-  "name": "CampoSync — Supervisión en campo",
-  "short_name": "CampoSync",
+  "name": "LimpiAPP — Supervisión en campo",
+  "short_name": "LimpiAPP",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b1f3a",
-  "theme_color": "#0b1f3a",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
   "lang": "es",
   "icons": [
     {
