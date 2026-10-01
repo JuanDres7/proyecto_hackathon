@@ -10,6 +10,7 @@
     "nlp": "docker compose up --build nlp"
   },
   "dependencies": {
+    "@supabase/server": "^1.9.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
     "dexie": "^4.4.6",
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
+    "supabase": "^2.119.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
