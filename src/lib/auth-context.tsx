@@ -59,8 +59,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         if (active) {
-          setUser(JSON.parse(raw) as SessionUser);
+          const session = JSON.parse(raw) as SessionUser;
+          setUser(session);
           setLoading(false);
+          void fetch("/api/session", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: session.id, role: session.role, fullName: session.fullName }),
+          });
         }
         return;
       }
@@ -103,10 +110,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const next = DEMO_USERS[role];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     setUser(next);
+    void fetch("/api/session", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: next.id, role: next.role, fullName: next.fullName }),
+    });
   }, []);
 
   const signOut = useCallback(async () => {
     localStorage.removeItem(STORAGE_KEY);
+    await fetch("/api/session", { method: "DELETE", credentials: "include" });
     const supabase = createClient();
     await supabase?.auth.signOut();
     setUser(null);

@@ -3,17 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { db, enqueueOutbox } from "@/lib/db";
-import { getCurrentPosition } from "@/lib/geo";
+import { getCurrentPosition, validateGeofence } from "@/lib/geo";
 import { persistVisit, syncPending } from "@/lib/sync";
-import type { LocalEvidence, LocalVisit, NovedadPriority } from "@/lib/types";
+import type { ChecklistItem, LocalEvidence, LocalVisit, NovedadPriority } from "@/lib/types";
 import { useAuth } from "@/lib/auth-context";
 
-type ChecklistTask = {
-  id: string;
-  title: string;
-  subtitle: string;
-  status: "completed" | "progress" | "pending";
-};
+type ChecklistTask = ChecklistItem;
 
 const INITIAL_CHECKLIST: ChecklistTask[] = [
   {
@@ -63,6 +58,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     setNovedad(row?.novedad ?? "");
     setNotes(row?.notes ?? "");
     setPriority(row?.novedadPriority ?? "alta");
+    if (row?.checklist?.length) setChecklist(row.checklist);
     setPhotos(await db.evidence.where("visitId").equals(visitId).toArray());
   }, [visitId]);
 
@@ -75,6 +71,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
       setNovedad(row?.novedad ?? "");
       setNotes(row?.notes ?? "");
       setPriority(row?.novedadPriority ?? "alta");
+      if (row?.checklist?.length) setChecklist(row.checklist);
       const ph = await db.evidence.where("visitId").equals(visitId).toArray();
       if (cancelled) return;
       setPhotos(ph);
@@ -90,6 +87,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     const next = {
       ...visit,
       ...patch,
+      checklist: patch.checklist ?? visit.checklist ?? checklist,
       updatedAt: new Date().toISOString(),
       syncStatus: "pending" as const,
     };
@@ -101,12 +99,34 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     setError("");
     try {
       const geo = await getCurrentPosition();
+      const fence = validateGeofence(
+        geo,
+        visit?.siteLat != null && visit?.siteLng != null
+          ? { lat: visit.siteLat, lng: visit.siteLng }
+          : { lat: 4.7642, lng: -74.0465 },
+        visit?.geofenceRadiusM ?? 120,
+      );
+      if (!fence.ok) {
+        setError(
+          fence.reason === "outside_geofence"
+            ? `Fuera de geocerca (${Math.round(fence.distanceM ?? 0)} m)`
+            : fence.reason === "gps_spoofed"
+              ? "GPS simulado detectado"
+              : "Precisión GPS insuficiente",
+        );
+        return;
+      }
       if (kind === "in") {
         await save({
           status: "en_curso",
           checkInAt: new Date().toISOString(),
           checkInLat: geo.lat,
           checkInLng: geo.lng,
+          checkInAccuracyM: geo.accuracy,
+          gpsMocked: geo.mocked,
+          siteLat: visit?.siteLat ?? 4.7642,
+          siteLng: visit?.siteLng ?? -74.0465,
+          identityVerified: Boolean(user && !user.demo),
         });
       } else {
         await save({
@@ -122,12 +142,18 @@ export function VisitDetail({ visitId }: { visitId: string }) {
   }
 
   async function onPhoto(file: File) {
+    const buf = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    const contentHash = Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
     const evidence: LocalEvidence = {
       id: crypto.randomUUID(),
       visitId,
       blob: file,
       mimeType: file.type || "image/jpeg",
       caption: "Evidencia de campo",
+      contentHash,
       syncStatus: "pending",
       createdAt: new Date().toISOString(),
     };
@@ -136,19 +162,15 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     await load();
   }
 
-  function toggleTask(id: string) {
-    setChecklist((prev) =>
-      prev.map((t) => {
-        if (t.id !== id) return t;
-        const nextStatus: ChecklistTask["status"] =
-          t.status === "pending"
-            ? "progress"
-            : t.status === "progress"
-            ? "completed"
-            : "pending";
-        return { ...t, status: nextStatus };
-      }),
-    );
+  async function toggleTask(id: string) {
+    const next = checklist.map((t) => {
+      if (t.id !== id) return t;
+      const nextStatus: ChecklistTask["status"] =
+        t.status === "pending" ? "progress" : t.status === "progress" ? "completed" : "pending";
+      return { ...t, status: nextStatus };
+    });
+    setChecklist(next);
+    await save({ checklist: next });
   }
 
   const completedCount = checklist.filter((t) => t.status === "completed").length;
@@ -216,7 +238,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
             </div>
           </div>
           <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-secondary/10 text-secondary border border-secondary/30 font-semibold">
-            Geocerca OK
+            {visit.checkInLat != null ? "Geocerca validada" : "Geocerca pendiente"}
           </span>
         </div>
 
@@ -293,6 +315,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
                 if (!visit.serviceNumber || !user) return;
                 await fetch("/api/en-route", {
                   method: "POST",
+                  credentials: "include",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     serviceNumber: visit.serviceNumber,

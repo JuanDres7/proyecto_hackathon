@@ -3,13 +3,14 @@ import { memory } from "./memory-store";
 import { createClient, isSupabaseConfigured } from "./supabase/client";
 import type { LocalVisit } from "./types";
 
+const MAX_ATTEMPTS = 5;
+
 function visitToRow(visit: LocalVisit) {
   return {
     client_uuid: visit.clientUuid,
-    supervisor_id: visit.supervisorId.startsWith("demo-")
-      ? null
-      : visit.supervisorId,
+    supervisor_id: visit.supervisorId.startsWith("demo-") ? null : visit.supervisorId,
     service_number: visit.serviceNumber ?? null,
+    cost_center_id: visit.costCenterId ?? null,
     site_name: visit.siteName,
     contracted_activity: visit.contractedActivity,
     status: visit.status,
@@ -19,9 +20,16 @@ function visitToRow(visit: LocalVisit) {
     check_in_lng: visit.checkInLng ?? null,
     check_out_lat: visit.checkOutLat ?? null,
     check_out_lng: visit.checkOutLng ?? null,
+    check_in_accuracy_m: visit.checkInAccuracyM ?? null,
+    gps_mocked: visit.gpsMocked ?? null,
+    site_lat: visit.siteLat ?? null,
+    site_lng: visit.siteLng ?? null,
+    geofence_radius_m: visit.geofenceRadiusM ?? 120,
+    identity_verified: visit.identityVerified ?? false,
     notes: visit.notes ?? null,
     novedad: visit.novedad ?? null,
     novedad_priority: visit.novedadPriority ?? null,
+    sync_status: "synced",
     updated_at: visit.updatedAt,
   };
 }
@@ -43,18 +51,6 @@ function ingestMemory(visit: LocalVisit) {
     created_at: visit.createdAt,
     updated_at: visit.updatedAt,
   });
-  if (visit.status === "novedad") {
-    const exists = memory.alerts.all().some((a) => a.visit_id === visit.id);
-    if (!exists) {
-      memory.alerts.add({
-        id: crypto.randomUUID(),
-        visit_id: visit.id,
-        message: `Novedad en ${visit.siteName}: ${visit.novedad ?? "sin detalle"}`,
-        severity: "alta",
-        created_at: new Date().toISOString(),
-      });
-    }
-  }
 }
 
 export async function persistVisit(visit: LocalVisit) {
@@ -63,42 +59,38 @@ export async function persistVisit(visit: LocalVisit) {
   ingestMemory(visit);
 }
 
+async function hashBlob(blob: Blob) {
+  const buf = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function postVisitApi(visit: LocalVisit) {
+  const res = await fetch("/api/field-visit", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(visit),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 export async function syncPending(): Promise<{ synced: number; failed: number }> {
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     return { synced: 0, failed: 0 };
   }
 
   const pending = await db.outbox.orderBy("createdAt").toArray();
-  if (pending.length === 0) return { synced: 0, failed: 0 };
-
-  if (!isSupabaseConfigured()) {
-    for (const item of pending) {
-      if (item.entity === "visit") {
-        const visit = await db.visits.get(String(item.payload.id));
-        if (visit) {
-          await db.visits.update(visit.id, { syncStatus: "synced" });
-          await fetch("/api/field-visit", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(visit),
-          }).catch(() => undefined);
-        }
-      }
-      if (item.entity === "evidence") {
-        await db.evidence.update(String(item.payload.id), { syncStatus: "synced" });
-      }
-      await db.outbox.delete(item.id);
-    }
-    return { synced: pending.length, failed: 0 };
-  }
-
-  const supabase = createClient();
-  if (!supabase) return { synced: 0, failed: pending.length };
+  const due = pending.filter((item) => !item.nextAttemptAt || item.nextAttemptAt <= new Date().toISOString());
+  if (due.length === 0) return { synced: 0, failed: 0 };
 
   let synced = 0;
   let failed = 0;
+  const supabase = createClient();
 
-  for (const item of pending) {
+  for (const item of due) {
     try {
       if (item.entity === "visit") {
         const visit = await db.visits.get(String(item.payload.id));
@@ -107,10 +99,12 @@ export async function syncPending(): Promise<{ synced: number; failed: number }>
           continue;
         }
         await db.visits.update(visit.id, { syncStatus: "syncing" });
-        const { error } = await supabase
-          .from("visits")
-          .upsert(visitToRow(visit), { onConflict: "client_uuid" });
-        if (error) throw error;
+        if (isSupabaseConfigured() && supabase && !visit.supervisorId.startsWith("demo-")) {
+          const { error } = await supabase.from("visits").upsert(visitToRow(visit), { onConflict: "client_uuid" });
+          if (error) throw error;
+        } else {
+          await postVisitApi(visit);
+        }
         await db.visits.update(visit.id, { syncStatus: "synced" });
       }
 
@@ -120,40 +114,72 @@ export async function syncPending(): Promise<{ synced: number; failed: number }>
           await db.outbox.delete(item.id);
           continue;
         }
-        await db.evidence.update(evidence.id, { syncStatus: "syncing" });
-        const path = `${evidence.visitId}/${evidence.id}`;
-        const { error: uploadError } = await supabase.storage
-          .from("evidencias")
-          .upload(path, evidence.blob, {
-            contentType: evidence.mimeType,
-            upsert: true,
-          });
+        if (!isSupabaseConfigured() || !supabase) {
+          await db.evidence.update(evidence.id, { syncStatus: "synced" });
+          await db.outbox.delete(item.id);
+          synced += 1;
+          continue;
+        }
+        const hash = evidence.contentHash ?? (await hashBlob(evidence.blob));
+        await db.evidence.update(evidence.id, { contentHash: hash, syncStatus: "syncing" });
+        const path = `${evidence.visitId}/${hash}`;
+        const { error: uploadError } = await supabase.storage.from("evidencias").upload(path, evidence.blob, {
+          contentType: evidence.mimeType,
+          upsert: true,
+        });
         if (uploadError) throw uploadError;
         const visit = await db.visits.get(evidence.visitId);
-        const { data: visitRow } = await supabase
+        const { data: visitRow, error: findErr } = await supabase
           .from("visits")
           .select("id")
           .eq("client_uuid", visit?.clientUuid ?? "")
           .maybeSingle();
-        const { error: rowError } = await supabase.from("visit_evidence").insert({
-          visit_id: visitRow?.id ?? null,
-          storage_path: path,
-          caption: evidence.caption ?? null,
-        });
+        if (findErr) throw findErr;
+        if (!visitRow?.id) throw new Error("visit_not_synced");
+        const { error: rowError } = await supabase.from("visit_evidence").upsert(
+          {
+            visit_id: visitRow.id,
+            storage_path: path,
+            caption: evidence.caption ?? null,
+            content_hash: hash,
+            client_uuid: evidence.id,
+          },
+          { onConflict: "visit_id,storage_path" },
+        );
         if (rowError) throw rowError;
-        await db.evidence.update(evidence.id, {
-          syncStatus: "synced",
-          storagePath: path,
-        });
+        await db.evidence.update(evidence.id, { syncStatus: "synced", storagePath: path, contentHash: hash });
       }
 
       await db.outbox.delete(item.id);
       synced += 1;
-    } catch {
+    } catch (err) {
       failed += 1;
-      await db.outbox.update(item.id, { attempts: item.attempts + 1 });
-      if (item.entity === "visit") {
-        await db.visits.update(String(item.payload.id), { syncStatus: "error" });
+      const attempts = item.attempts + 1;
+      const lastError = err instanceof Error ? err.message : "sync_error";
+      if (attempts >= MAX_ATTEMPTS) {
+        await db.deadletter.add({
+          ...item,
+          attempts,
+          lastError,
+          failedAt: new Date().toISOString(),
+        });
+        await db.outbox.delete(item.id);
+        if (item.entity === "visit") {
+          await db.visits.update(String(item.payload.id), { syncStatus: "dead" });
+        }
+        if (item.entity === "evidence") {
+          await db.evidence.update(String(item.payload.id), { syncStatus: "dead" });
+        }
+      } else {
+        const delayMs = Math.min(30 * 60 * 1000, 2000 * 2 ** attempts);
+        await db.outbox.update(item.id, {
+          attempts,
+          lastError,
+          nextAttemptAt: new Date(Date.now() + delayMs).toISOString(),
+        });
+        if (item.entity === "visit") {
+          await db.visits.update(String(item.payload.id), { syncStatus: "error" });
+        }
       }
     }
   }
@@ -171,6 +197,9 @@ export function startSyncWorker() {
   window.addEventListener("online", run);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") run();
+  });
+  navigator.serviceWorker?.addEventListener("message", (event) => {
+    if (event.data?.type === "CAMPO_SYNC") run();
   });
   run();
 

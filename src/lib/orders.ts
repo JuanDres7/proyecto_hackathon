@@ -57,10 +57,12 @@ export async function saveDraft(draft: QuoteDraft) {
       .eq("quote_json->>draftId", draft.draftId)
       .maybeSingle();
     if (existing?.id) {
-      await admin.from("service_orders").update(row).eq("id", existing.id);
+      const { error } = await admin.from("service_orders").update(row).eq("id", existing.id);
+      if (error) throw error;
       return existing.id as string;
     }
-    const { data } = await admin.from("service_orders").insert(row).select("id").single();
+    const { data, error } = await admin.from("service_orders").insert(row).select("id").single();
+    if (error) throw error;
     return data?.id as string;
   }
 
@@ -87,48 +89,40 @@ export async function confirmDraft(draft: QuoteDraft) {
   };
   const admin = createAdminClient();
   if (admin) {
-    await admin
-      .from("service_orders")
-      .update({
-        service_number: code,
-        customer_name: next.customerName,
-        customer_document: next.customerDocument,
+    const { data, error } = await admin.rpc("confirm_service_draft", {
+      p_draft: {
+        draftId: draft.draftId,
+        customerName: next.customerName,
+        customerDocument: next.customerDocument,
         email: next.email,
         phone: next.phone,
-        opening_message: next.openingMessage,
+        openingMessage: next.openingMessage,
         services: next.services,
-        scheduled_at: next.scheduledAt,
+        scheduledAt: next.scheduledAt,
         location: next.location,
-        access_notes: next.accessNotes ?? null,
-        status: "confirmed",
-        quote_json: { draftId: draft.draftId },
-      })
-      .or(`service_number.eq.draft-${draft.draftId},quote_json->>draftId.eq.${draft.draftId}`);
-    const { data: found } = await admin
-      .from("service_orders")
-      .select("id")
-      .eq("quote_json->>draftId", draft.draftId)
-      .maybeSingle();
-    if (!found) {
-      await admin.from("service_orders").insert({
-        service_number: code,
-        customer_name: next.customerName,
-        customer_document: next.customerDocument,
-        email: next.email,
-        phone: next.phone,
-        opening_message: next.openingMessage,
-        services: next.services,
-        scheduled_at: next.scheduledAt,
-        location: next.location,
-        access_notes: next.accessNotes ?? null,
-        status: "confirmed",
-        quote_json: { draftId: draft.draftId },
-      });
+        accessNotes: next.accessNotes,
+      },
+    });
+    if (error) {
+      return { ok: false as const, missing: ["persistencia"] };
     }
+    if (typeof data === "string") next.serviceNumber = data;
   } else {
     memory.orders.upsert({ ...next, id: draft.draftId });
   }
-  return { ok: true as const, serviceNumber: code };
+  return { ok: true as const, serviceNumber: next.serviceNumber ?? code };
+}
+
+export async function simulatePayment(serviceNumber: string) {
+  const admin = createAdminClient();
+  if (admin) {
+    const { error } = await admin.rpc("simulate_payment", { p_service_number: serviceNumber });
+    if (error) return { ok: false as const };
+    return { ok: true as const };
+  }
+  const o = memory.orders.byNumber(serviceNumber);
+  if (o) memory.orders.upsert({ ...o, quoteJson: { ...(o.quoteJson ?? {}), payment: "simulated_paid" } });
+  return { ok: true as const };
 }
 
 export async function getOrderByNumber(serviceNumber: string) {
@@ -272,30 +266,99 @@ export async function markEnRoute(serviceNumber: string, supervisorId: string) {
 }
 
 export async function coordinatorAction(opts: {
-  serviceNumber: string;
-  action: "authorize_close" | "reassign";
+  serviceNumber?: string;
+  action: "authorize_close" | "reassign" | "close_alert" | "assign_route";
   supervisorId?: string;
+  alertId?: string;
+  comment?: string;
+  costCenterId?: string;
+  scheduledStart?: string;
+  actorId?: string;
 }) {
   const admin = createAdminClient();
-  if (opts.action === "reassign" && opts.supervisorId) {
+  if (opts.action === "assign_route" && opts.serviceNumber && opts.supervisorId) {
     if (admin) {
+      const { data: order, error: orderErr } = await admin
+        .from("service_orders")
+        .select("id")
+        .eq("service_number", opts.serviceNumber)
+        .maybeSingle();
+      if (orderErr || !order) return { ok: false, error: "no_encontrado" };
+      const { error: upErr } = await admin
+        .from("service_orders")
+        .update({
+          supervisor_id: opts.supervisorId,
+          assigned_by: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
+          cost_center_id: opts.costCenterId ?? null,
+          route_date: opts.scheduledStart ? opts.scheduledStart.slice(0, 10) : null,
+        })
+        .eq("id", order.id);
+      if (upErr) return { ok: false, error: upErr.message };
+      const { error: asErr } = await admin.from("visit_assignments").upsert(
+        {
+          service_order_id: order.id,
+          supervisor_id: opts.supervisorId,
+          assigned_by: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
+          scheduled_start: opts.scheduledStart ?? null,
+          status: "asignada",
+        },
+        { onConflict: "service_order_id,supervisor_id" },
+      );
+      if (asErr) return { ok: false, error: asErr.message };
+      await admin.from("audit_log").insert({
+        actor_id: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
+        action: "assign_route",
+        entity: "service_orders",
+        entity_id: order.id,
+      });
+    }
+    return { ok: true };
+  }
+  if (opts.action === "close_alert" && opts.alertId) {
+    if (admin) {
+      const { error } = await admin
+        .from("alerts")
+        .update({
+          status: "closed",
+          coordinator_comment: opts.comment ?? null,
+          closed_at: new Date().toISOString(),
+          closed_by: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
+        })
+        .eq("id", opts.alertId);
+      if (error) return { ok: false, error: error.message };
       await admin
+        .from("incidents")
+        .update({
+          status: "closed",
+          coordinator_comment: opts.comment ?? null,
+          closed_at: new Date().toISOString(),
+          closed_by: opts.actorId?.startsWith("demo-") ? null : opts.actorId,
+        })
+        .eq("alert_id", opts.alertId);
+    }
+    return { ok: true };
+  }
+  if (opts.action === "reassign" && opts.supervisorId && opts.serviceNumber) {
+    if (admin) {
+      const { error } = await admin
         .from("service_orders")
         .update({ supervisor_id: opts.supervisorId, en_route_at: null })
         .eq("service_number", opts.serviceNumber);
+      if (error) return { ok: false, error: error.message };
     } else {
       const o = memory.orders.byNumber(opts.serviceNumber);
       if (o) memory.orders.upsert({ ...o, supervisorId: opts.supervisorId, enRouteAt: undefined });
     }
     return { ok: true };
   }
-  if (opts.action === "authorize_close") {
+  if (opts.action === "authorize_close" && opts.serviceNumber) {
     if (admin) {
-      const { data } = await admin
+      const { data, error } = await admin
         .from("service_orders")
         .select("quote_json")
         .eq("service_number", opts.serviceNumber)
         .maybeSingle();
+      if (error) return { ok: false, error: error.message };
       await admin
         .from("service_orders")
         .update({
