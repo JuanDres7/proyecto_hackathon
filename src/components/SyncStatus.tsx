@@ -3,20 +3,15 @@
 import { useEffect, useState } from "react";
 import { db } from "@/lib/db";
 import { startSyncWorker, syncPending } from "@/lib/sync";
+import { useOnlineStatus } from "./supervisor/useOnlineStatus";
 
 export function SyncStatus() {
-  const [online, setOnline] = useState(
-    typeof navigator === "undefined" ? true : navigator.onLine,
-  );
+  const online = useOnlineStatus();
   const [queued, setQueued] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastMessage, setLastMessage] = useState<string>("");
 
   useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
     const stop = startSyncWorker();
     const tick = async () => {
       setQueued(await db.outbox.count());
@@ -24,8 +19,6 @@ export function SyncStatus() {
     void tick();
     const id = window.setInterval(() => void tick(), 3000);
     return () => {
-      window.removeEventListener("online", on);
-      window.removeEventListener("offline", off);
       window.clearInterval(id);
       stop();
     };

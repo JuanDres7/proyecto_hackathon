@@ -9,6 +9,7 @@ export async function GET() {
       location: r.location,
       services: r.services,
       customerName: r.customer_name,
+      scheduledAt: r.scheduled_at,
       enRouteAt: r.en_route_at,
     })),
   });

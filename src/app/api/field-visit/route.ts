@@ -12,6 +12,10 @@ export async function POST(req: Request) {
     status: string;
     checkInAt?: string;
     checkOutAt?: string;
+    checkInLat?: number;
+    checkInLng?: number;
+    checkOutLat?: number;
+    checkOutLng?: number;
     novedad?: string;
     notes?: string;
     novedadPriority?: string;
@@ -28,6 +32,10 @@ export async function POST(req: Request) {
     status: visit.status,
     check_in_at: visit.checkInAt ?? null,
     check_out_at: visit.checkOutAt ?? null,
+    check_in_lat: visit.checkInLat ?? null,
+    check_in_lng: visit.checkInLng ?? null,
+    check_out_lat: visit.checkOutLat ?? null,
+    check_out_lng: visit.checkOutLng ?? null,
     novedad: visit.novedad ?? null,
     notes: visit.notes ?? null,
     novedad_priority: visit.novedadPriority ?? null,

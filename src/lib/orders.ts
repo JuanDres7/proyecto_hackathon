@@ -240,7 +240,7 @@ export async function listConfirmedServices() {
   if (admin) {
     const { data } = await admin
       .from("service_orders")
-      .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status")
+      .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status, scheduled_at")
       .eq("status", "confirmed")
       .order("created_at", { ascending: false });
     return data ?? [];
@@ -250,6 +250,7 @@ export async function listConfirmedServices() {
     location: o.location,
     services: o.services,
     customer_name: o.customerName,
+    scheduled_at: o.scheduledAt,
     en_route_at: o.enRouteAt,
     supervisor_id: o.supervisorId,
     status: o.status,
