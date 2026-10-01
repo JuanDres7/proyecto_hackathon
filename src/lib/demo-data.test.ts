@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { listServicesForEmail, serviceDetailForEmail } from "./client-services";
 import { ensureDemoShowcase } from "./demo-data";
+import { getOrderByNumber, listConfirmedServices } from "./orders";
 import { buildReportRows, visitsFromMemory } from "./reports";
 import { authenticateSeed, DEMO_PASSWORD } from "./seed-users";
 
@@ -17,6 +18,10 @@ describe("datos de presentación", () => {
     const services = await listServicesForEmail("cliente@limpiapp.co");
     expect(services.map((service) => service.serviceNumber).sort()).toEqual(["#3050", "#3066", "#3089", "#3090", "#3091"]);
     expect(services.find((service) => service.serviceNumber === "#3089")?.status).toBe("asignado");
+    const order = await getOrderByNumber("#3089");
+    expect(JSON.stringify(order)).toContain("#3089");
+    const listed = await listConfirmedServices();
+    expect(listed.some((row) => row.service_number === "#3089")).toBe(true);
     const closed = await serviceDetailForEmail("cliente@limpiapp.co", "3066");
     expect(closed?.novedad).toContain("jabón");
     expect(closed?.activities.some((activity) => activity.justification.includes("jabón"))).toBe(true);

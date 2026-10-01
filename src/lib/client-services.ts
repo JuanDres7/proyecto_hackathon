@@ -64,9 +64,9 @@ export async function serviceDetailForEmail(email: string, code: string): Promis
   const summary = owned.find((item) => item.serviceNumber === serviceNumber);
   if (!summary) return null;
 
+  const order = memory.orders.byNumber(serviceNumber);
+  let visit = memory.visits.byNumber(serviceNumber);
   const admin = createAdminClient();
-  const order = admin ? null : memory.orders.byNumber(serviceNumber);
-  let visit = admin ? null : memory.visits.byNumber(serviceNumber);
   if (admin) {
     const { data } = await admin
       .from("visits")
@@ -75,7 +75,7 @@ export async function serviceDetailForEmail(email: string, code: string): Promis
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    visit = data as typeof visit;
+    if (data) visit = data as typeof visit;
   }
 
   const localVisit: LocalVisit = {
@@ -116,8 +116,22 @@ export async function serviceDetailForEmail(email: string, code: string): Promis
 }
 
 async function loadOwned(email: string): Promise<ClientServiceSummary[]> {
+  const local = servicesFromMemory(email);
   const admin = createAdminClient();
-  if (admin) {
+  if (!admin) return local;
+  try {
+    const remote = await servicesFromSupabase(admin, email);
+    const seen = new Set(remote.map((item) => item.serviceNumber));
+    return [...remote, ...local.filter((item) => !seen.has(item.serviceNumber))];
+  } catch {
+    return local;
+  }
+}
+
+async function servicesFromSupabase(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  email: string,
+): Promise<ClientServiceSummary[]> {
     const { data } = await admin
       .from("service_orders")
       .select("service_number, location, services, scheduled_at, status, supervisor_id, en_route_at, access_notes, email")
@@ -155,9 +169,10 @@ async function loadOwned(email: string): Promise<ClientServiceSummary[]> {
         accessNotes: row.access_notes,
       });
     }
-    return items;
-  }
+  return items;
+}
 
+function servicesFromMemory(email: string): ClientServiceSummary[] {
   return memory.orders
     .confirmed()
     .filter((order) => (order.email ?? "").toLowerCase() === email && order.serviceNumber)

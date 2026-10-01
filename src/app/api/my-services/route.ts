@@ -4,7 +4,7 @@ import { listServicesForEmail, serviceDetailForEmail, statusLabel } from "@/lib/
 import { seedUserById } from "@/lib/seed-users";
 
 function actorEmail(actor: { id: string; email?: string }) {
-  return actor.email?.trim() || seedUserById(actor.id)?.email || "";
+  return seedUserById(actor.id)?.email || actor.email?.trim() || "";
 }
 
 export async function GET(req: Request) {

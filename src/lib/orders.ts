@@ -128,6 +128,7 @@ export async function simulatePayment(serviceNumber: string) {
 }
 
 export async function getOrderByNumber(serviceNumber: string) {
+  ensureDemoShowcase();
   const admin = createAdminClient();
   if (admin) {
     const { data } = await admin
@@ -135,17 +136,18 @@ export async function getOrderByNumber(serviceNumber: string) {
       .select("*")
       .eq("service_number", serviceNumber)
       .maybeSingle();
-    if (!data) return null;
-    let supervisorName: string | null = null;
-    if (data.supervisor_id) {
-      const { data: p } = await admin
-        .from("profiles")
-        .select("full_name")
-        .eq("id", data.supervisor_id)
-        .maybeSingle();
-      supervisorName = p?.full_name ?? null;
+    if (data) {
+      let supervisorName: string | null = null;
+      if (data.supervisor_id) {
+        const { data: profile } = await admin
+          .from("profiles")
+          .select("full_name")
+          .eq("id", data.supervisor_id)
+          .maybeSingle();
+        supervisorName = profile?.full_name ?? null;
+      }
+      return { ...data, supervisorName };
     }
-    return { ...data, supervisorName };
   }
   return memory.orders.byNumber(serviceNumber) ?? null;
 }
@@ -195,10 +197,9 @@ export async function lookupProgress(serviceNumber: string) {
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    visit = data as typeof visit;
-  } else {
-    visit = memory.visits.byNumber(serviceNumber);
+    visit = (data as typeof visit) ?? null;
   }
+  if (!visit) visit = memory.visits.byNumber(serviceNumber);
 
   const facts = {
     status: (order as { status: string }).status,
@@ -231,26 +232,31 @@ export async function lookupProgress(serviceNumber: string) {
   };
 }
 
+function confirmedFromMemory() {
+  return memory.orders.confirmed().map((order) => ({
+    service_number: order.serviceNumber,
+    location: order.location,
+    services: order.services,
+    customer_name: order.customerName,
+    en_route_at: order.enRouteAt,
+    supervisor_id: order.supervisorId,
+    status: order.status,
+  }));
+}
+
 export async function listConfirmedServices() {
   ensureDemoShowcase();
+  const local = confirmedFromMemory();
   const admin = createAdminClient();
-  if (admin) {
-    const { data } = await admin
-      .from("service_orders")
-      .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status")
-      .eq("status", "confirmed")
-      .order("created_at", { ascending: false });
-    return data ?? [];
-  }
-  return memory.orders.confirmed().map((o) => ({
-    service_number: o.serviceNumber,
-    location: o.location,
-    services: o.services,
-    customer_name: o.customerName,
-    en_route_at: o.enRouteAt,
-    supervisor_id: o.supervisorId,
-    status: o.status,
-  }));
+  if (!admin) return local;
+  const { data, error } = await admin
+    .from("service_orders")
+    .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status")
+    .eq("status", "confirmed")
+    .order("created_at", { ascending: false });
+  if (error || !data) return local;
+  const seen = new Set(data.map((row) => row.service_number));
+  return [...data, ...local.filter((row) => row.service_number && !seen.has(row.service_number))];
 }
 
 export async function markEnRoute(serviceNumber: string, supervisorId: string) {

@@ -1,6 +1,5 @@
 import { createFlow, encodeVisitFlow } from "@/components/supervisor/visit-flow";
 import { memory } from "./memory-store";
-import { createAdminClient } from "./supabase/admin";
 
 function atDay(offset: number, hour: number) {
   const date = new Date();
@@ -10,7 +9,6 @@ function atDay(offset: number, hour: number) {
 }
 
 export function ensureDemoShowcase() {
-  if (createAdminClient()) return;
   if (memory.orders.byNumber("#3089")) return;
 
   const client = {

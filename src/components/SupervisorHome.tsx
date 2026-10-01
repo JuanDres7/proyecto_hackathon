@@ -17,6 +17,7 @@ export function SupervisorHome() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [visits, setVisits] = useState<LocalVisit[]>([]);
+  const [assigned, setAssigned] = useState<AssignedOrder[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -29,10 +30,29 @@ export function SupervisorHome() {
     };
   }, [user]);
 
-  async function openCode(event: React.FormEvent) {
-    event.preventDefault();
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    void fetch("/api/confirmed-services", { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) return [];
+        const json = (await response.json()) as { services?: AssignedOrder[] };
+        return json.services ?? [];
+      })
+      .then((rows) => {
+        if (!cancelled) setAssigned(rows.filter((row) => row.serviceNumber));
+      })
+      .catch(() => {
+        if (!cancelled) setAssigned([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  async function openService(raw: string) {
     if (!user || busy) return;
-    const digits = code.trim().replace(/^#/, "");
+    const digits = raw.trim().replace(/^#/, "");
     if (!/^\d{3,8}$/.test(digits)) {
       setError("Ingresa el código que te entregó el coordinador.");
       return;
@@ -43,8 +63,12 @@ export function SupervisorHome() {
       const response = await fetch(`/api/confirmed-services?code=${encodeURIComponent(`#${digits}`)}`, {
         credentials: "include",
       });
+      if (response.status === 401 || response.status === 403) {
+        setError("Vuelve a entrar con supervisor@limpiapp.co para abrir el código.");
+        return;
+      }
       if (!response.ok) {
-        setError("Ese código no está asignado. Confírmalo con el coordinador.");
+        setError("Ese código no está asignado. Usa #3089, #3090, #3091, #3066 o #3050.");
         return;
       }
       const json = (await response.json()) as { service?: AssignedOrder };
@@ -71,7 +95,34 @@ export function SupervisorHome() {
         </p>
       </section>
 
-      <form onSubmit={openCode} className="space-y-3 rounded-xl border border-border-subtle bg-surface-container-low p-4">
+      {assigned.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-text-primary">Códigos asignados</h2>
+          <ul className="space-y-2">
+            {assigned.map((service) => (
+              <li key={service.serviceNumber}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void openService(service.serviceNumber)}
+                  className="w-full rounded-xl border border-border-subtle bg-surface-container-low p-4 text-left"
+                >
+                  <p className="font-mono text-lg font-semibold text-text-primary">{service.serviceNumber}</p>
+                  <p className="mt-1 text-sm text-text-secondary">{service.location || "Sin dirección"}</p>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void openService(code);
+        }}
+        className="space-y-3 rounded-xl border border-border-subtle bg-surface-container-low p-4"
+      >
         <h2 className="text-sm font-semibold text-text-primary">Código del servicio</h2>
         <p className="text-sm text-text-secondary">
           Escríbelo tal como te lo entregó el coordinador. Las tareas salen de ese servicio.
