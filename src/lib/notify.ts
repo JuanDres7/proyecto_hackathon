@@ -21,12 +21,32 @@ async function sendEmail(to: string, subject: string, text: string) {
   return { ok: true as const };
 }
 
+type WebPushClient = {
+  setVapidDetails: (subject: string, publicKey: string, privateKey: string) => void;
+  sendNotification: (
+    subscription: { endpoint: string; keys: { p256dh: string; auth: string } },
+    payload: string,
+  ) => Promise<void>;
+};
+
+async function loadWebPush(): Promise<WebPushClient | null> {
+  try {
+    const importer = new Function("specifier", "return import(specifier)") as (
+      specifier: string,
+    ) => Promise<WebPushClient>;
+    return await importer("web-push");
+  } catch {
+    return null;
+  }
+}
+
 async function sendWebPush(sub: PushSub, title: string, body: string) {
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   const privateKey = process.env.VAPID_PRIVATE_KEY;
   const mailto = process.env.VAPID_MAILTO ?? "mailto:ops@limpiapp.local";
   if (!publicKey || !privateKey) return { ok: false as const, reason: "no_vapid" };
-  const webpush = await import("web-push");
+  const webpush = await loadWebPush();
+  if (!webpush) return { ok: false as const, reason: "no_web_push" };
   webpush.setVapidDetails(mailto.startsWith("mailto:") ? mailto : `mailto:${mailto}`, publicKey, privateKey);
   await webpush.sendNotification(
     {
