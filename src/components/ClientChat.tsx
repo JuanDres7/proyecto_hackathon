@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CANCELLATION_REASONS, SERVICE_CATALOG, serviceLabels } from "@/lib/catalog";
 import { requiredQuoteFields } from "@/lib/quote-fields";
 import type { ChatMessage, ChatState, QuoteDraft } from "@/lib/types";
@@ -70,7 +70,7 @@ export function ClientChat() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [draftLockedByRoute, setDraftLockedByRoute] = useState(false);
-  const [assistantDownNoted, setAssistantDownNoted] = useState(false);
+  const messagesRef = useRef(messages);
 
   const activeHint = useMemo(
     () => STATES.find((s) => s.id === state)?.hint ?? "",
@@ -78,10 +78,12 @@ export function ClientChat() {
   );
 
   function push(role: ChatMessage["role"], content: string) {
-    setMessages((prev) => [
-      ...prev,
+    const next = [
+      ...messagesRef.current,
       { id: crypto.randomUUID(), role, content, createdAt: nowStamp() },
-    ]);
+    ];
+    messagesRef.current = next;
+    setMessages(next);
   }
 
   function patchDraft(p: Partial<QuoteDraft>) {
@@ -142,10 +144,12 @@ export function ClientChat() {
     push("assistant", "No se emitió código. Corrige los datos y vuelve a pedir el resumen.");
   }
 
-  function noteAssistantDown(available: boolean) {
-    if (available || assistantDownNoted) return;
-    setAssistantDownNoted(true);
-    push("assistant", "Gemini no respondió. Revisa la clave GEMINI_API_KEY y vuelve a escribir.");
+  function noteAssistantDown(detail?: string | null) {
+    const text = detail?.trim();
+    push(
+      "assistant",
+      text || "No pude responder este mensaje. Escríbelo otra vez.",
+    );
   }
 
   function applyExtracted(extracted: Partial<QuoteDraft>) {
@@ -183,10 +187,12 @@ export function ClientChat() {
   }
 
   async function converse(phase: ChatState, text: string) {
-    const history = messages
-      .filter((m): m is ChatMessage & { role: "user" | "assistant" } => m.role === "user" || m.role === "assistant")
-      .slice(-10)
-      .map((m) => ({ role: m.role, content: m.content }));
+    const prior = messagesRef.current.filter(
+      (m): m is ChatMessage & { role: "user" | "assistant" } => m.role === "user" || m.role === "assistant",
+    );
+    const withoutCurrent =
+      prior.at(-1)?.role === "user" && prior.at(-1)?.content === text ? prior.slice(0, -1) : prior;
+    const history = withoutCurrent.slice(-8).map((m) => ({ role: m.role, content: m.content }));
     const res = await fetch("/api/gemini", {
       method: "POST",
       credentials: "include",
@@ -200,8 +206,19 @@ export function ClientChat() {
         editsLocked: draftLockedByRoute,
       }),
     });
-    if (!res.ok) return null;
-    return (await res.json()) as {
+    const json = (await res.json().catch(() => null)) as {
+      available?: boolean;
+      reply?: string | null;
+      error?: string;
+    } | null;
+    if (!res.ok || !json) {
+      return {
+        available: false,
+        reply: json?.reply ?? json?.error ?? null,
+        extracted: {},
+      };
+    }
+    return json as {
       available: boolean;
       reply: string | null;
       extracted?: Partial<QuoteDraft>;
@@ -234,10 +251,6 @@ export function ClientChat() {
     setBusy(true);
     try {
       const json = await converse("cotizacion", text);
-      if (!json) {
-        noteAssistantDown(false);
-        return;
-      }
       if (json.editLocked) setDraftLockedByRoute(true);
       const labels = json.editLocked ? [] : capturedLabels(draft, json.extracted ?? {});
       if (!json.editLocked) applyExtracted(json.extracted ?? {});
@@ -246,12 +259,13 @@ export function ClientChat() {
         push("assistant", json.reply);
         return;
       }
-      noteAssistantDown(json.available);
       if (labels.length && !json.editLocked) {
         push("assistant", `Anoté en el formulario: ${labels.join(", ")}.`);
+        return;
       }
+      noteAssistantDown(null);
     } catch {
-      noteAssistantDown(false);
+      noteAssistantDown(null);
     } finally {
       setBusy(false);
     }

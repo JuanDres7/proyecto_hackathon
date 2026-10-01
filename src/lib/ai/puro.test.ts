@@ -86,6 +86,43 @@ describe("Puro llama a Gemini", () => {
     expect(body.contents[0].parts[0].text).toContain("¿En qué te puedo colaborar?");
   });
 
+  it("reintenta el segundo mensaje sin historial si Gemini rechaza la conversación", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    ensureDemoShowcase();
+    let calls = 0;
+    const fetchMock = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { message: "thought signature is not valid" } }), {
+          status: 400,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ reply: "¿En qué dirección queda?" }) }] } }],
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await puroTurn({
+      phase: "cotizacion",
+      message: "Quiero cotizar un aseo",
+      email: "cliente@limpiapp.co",
+      history: [
+        { role: "user", content: "hola" },
+        { role: "assistant", content: "¿Qué servicio necesitas?" },
+      ],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const second = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(second[1].body));
+    expect(body.contents[0].parts[0].text).not.toContain("Conversación previa");
+    expect(result.reply).toContain("dirección");
+  });
+
   it("muestra el error de Gemini en lugar de ocultarlo", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     vi.stubGlobal(

@@ -6,9 +6,27 @@ import { seedUserById } from "@/lib/seed-users";
 
 const PHASES = new Set<PuroPhase>(["cotizacion", "progreso", "finalizacion"]);
 
+export const maxDuration = 60;
+
 export async function POST(req: Request) {
   const gate = await requireRole(req, ["cliente", "coordinador", "supervisor"]);
   if (gate.error) return gate.error;
+  try {
+    return await handleGemini(req, gate.actor);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "error interno";
+    return NextResponse.json({
+      available: false,
+      reply: `No pude completar la respuesta: ${message.slice(0, 180)}`,
+      grounded: false,
+      extracted: {},
+      editLocked: false,
+      progress: null,
+    });
+  }
+}
+
+async function handleGemini(req: Request, actor: { id: string; email?: string }) {
   const body = (await req.json().catch(() => null)) as {
     phase?: PuroPhase;
     message?: string;
@@ -39,7 +57,7 @@ export async function POST(req: Request) {
     draft: body?.draft,
     serviceNumber: body?.serviceNumber ?? body?.draft?.serviceNumber,
     editsLocked: body?.editsLocked,
-    email: gate.actor.email || seedUserById(gate.actor.id)?.email,
+    email: actor.email || seedUserById(actor.id)?.email,
   });
 
   if (message.trim()) {

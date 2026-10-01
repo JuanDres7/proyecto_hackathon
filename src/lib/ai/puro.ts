@@ -67,6 +67,7 @@ function draftContext(draft?: Partial<QuoteDraft>) {
 function contentsFrom(history: HistoryTurn[], latest: string): GeminiContent[] {
   const previous = history
     .slice(-8)
+    .filter((turn) => typeof turn?.content === "string" && turn.content.trim())
     .map((turn) => `${turn.role === "assistant" ? "Puro" : "Cliente"}: ${turn.content.slice(0, 800)}`)
     .join("\n");
   const text = [previous ? `Conversación previa:\n${previous}` : "", latest.slice(0, 4000)]
@@ -151,10 +152,16 @@ export async function puroTurn(input: {
     `ULTIMO_MENSAJE: ${message}`,
   ].join("\n");
 
-  const model = await generateGeminiJson<ModelJson>({
+  let model = await generateGeminiJson<ModelJson>({
     system: SYSTEM,
     contents: contentsFrom(input.history ?? [], latest),
   });
+  if (!model.ok && (input.history?.length ?? 0) > 0) {
+    model = await generateGeminiJson<ModelJson>({
+      system: SYSTEM,
+      contents: contentsFrom([], latest),
+    });
+  }
 
   const allowedCodes = [
     ...services.map((service) => service.serviceNumber),
