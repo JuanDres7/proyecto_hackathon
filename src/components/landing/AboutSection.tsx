@@ -34,8 +34,8 @@ export function AboutSection() {
             Somos la plataforma que conecta supervisores en campo, coordinadores
             de operación y clientes en un solo flujo de control. Nuestra propuesta
             institucional es clara: visibilidad total de aseo, jardinería y
-            mantenimiento, con evidencia, tiempo real y respaldo de inteligencia
-            artificial.
+            limpieza de piscinas, con evidencia, tiempo real y respaldo de
+            inteligencia artificial.
           </p>
         </div>
 

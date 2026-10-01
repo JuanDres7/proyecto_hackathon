@@ -33,21 +33,21 @@ const MODULES: Record<
 > = {
   supervisor: {
     href: "/supervisor",
-    title: "Módulo del Supervisor",
-    subtitle: "PWA Móvil · Offline-first",
+    title: "Módulo del supervisor",
+    subtitle: "App móvil · Sin conexión",
     body: "Registra visitas en territorio sin señal, valida geocercas, captura evidencias y sincroniza al recuperar conectividad.",
     icon: HardHat,
     accent: "from-secondary/20 to-transparent border-secondary/30",
     chip: "bg-secondary/15 text-secondary border-secondary/25",
     features: [
-      { icon: Shield, label: "Check-in GPS" },
-      { icon: Radio, label: "Sync automático" },
+      { icon: Shield, label: "Registro GPS" },
+      { icon: Radio, label: "Sincronización" },
       { icon: Map, label: "Rutas en campo" },
     ],
   },
   coordinador: {
     href: "/coordinador",
-    title: "Panel del Coordinador",
+    title: "Panel del coordinador",
     subtitle: "Centro de mando · Telemetría",
     body: "Visualiza cuadrillas, mapas, alertas tempranas y el estado de cumplimiento de cada sede en tiempo real.",
     icon: LayoutDashboard,
@@ -61,7 +61,7 @@ const MODULES: Record<
   },
   cliente: {
     href: "/cliente",
-    title: "Portal de Cliente + IA",
+    title: "Atención al cliente (IA)",
     subtitle: "Asistente · Cotización · Seguimiento",
     body: "Conversa con el asistente, cotiza servicios, sigue el avance con código único y reporta novedades con validación visual.",
     icon: Bot,

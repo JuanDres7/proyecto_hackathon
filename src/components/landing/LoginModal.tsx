@@ -24,7 +24,7 @@ const ROLES: {
   {
     id: "supervisor",
     title: "Supervisor",
-    hint: "PWA móvil · Offline-first",
+    hint: "Visitas en campo",
     icon: HardHat,
     accent: "border-secondary/40 hover:border-secondary data-[active=true]:border-secondary data-[active=true]:bg-secondary/10",
   },
@@ -37,8 +37,8 @@ const ROLES: {
   },
   {
     id: "cliente",
-    title: "Cliente + IA",
-    hint: "Portal conversacional",
+    title: "Cliente",
+    hint: "Atención con IA",
     icon: Bot,
     accent: "border-ai-accent/40 hover:border-ai-accent data-[active=true]:border-ai-accent data-[active=true]:bg-ai-accent/10",
   },
@@ -61,11 +61,16 @@ export function LoginModal({
 
   useEffect(() => {
     if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open, onClose]);
 
   useEffect(() => {
@@ -103,7 +108,7 @@ export function LoginModal({
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-md rounded-2xl border border-border-muted bg-surface-container-low shadow-2xl shadow-black/40 animate-fade-up overflow-hidden">
+      <div className="relative w-full max-w-md max-h-[calc(100svh-2rem)] overflow-y-auto rounded-2xl border border-border-muted bg-surface-container-low shadow-2xl shadow-black/40 animate-fade-up">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border-subtle">
           <BrandMark size="sm" />
           <button
@@ -133,13 +138,13 @@ export function LoginModal({
                 type="button"
                 data-active={role === id}
                 onClick={() => setRole(id)}
-                className={`rounded-xl border bg-surface/40 px-2 py-3 text-left transition-all ${accent}`}
+                className={`min-w-0 rounded-xl border bg-surface/40 px-2 py-3 text-left transition-all ${accent}`}
               >
                 <Icon size={18} className="text-text-primary mb-2" />
-                <span className="block text-xs font-semibold text-text-primary">
+                <span className="block text-xs font-semibold text-text-primary break-words">
                   {title}
                 </span>
-                <span className="block text-[10px] text-text-muted mt-0.5 leading-tight">
+                <span className="block text-[10px] text-text-muted mt-0.5 leading-tight break-words">
                   {hint}
                 </span>
               </button>

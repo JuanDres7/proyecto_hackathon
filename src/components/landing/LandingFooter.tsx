@@ -30,7 +30,7 @@ export function LandingFooter() {
         </div>
       </div>
       <div className="border-t border-border-subtle px-5 py-4 text-center text-xs text-text-muted">
-        © {new Date().getFullYear()} LimpiAPP · Todos los derechos reservados
+        © {new Date().getFullYear()} LimpiApp · Todos los derechos reservados
       </div>
     </footer>
   );

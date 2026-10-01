@@ -35,7 +35,7 @@ export function SyncStatus() {
     setIsSyncing(true);
     try {
       const result = await syncPending();
-      setLastMessage(`${result.synced} ok`);
+      setLastMessage(`${result.synced} listos`);
       setQueued(await db.outbox.count());
     } finally {
       setIsSyncing(false);
@@ -50,8 +50,8 @@ export function SyncStatus() {
             online ? "bg-status-online animate-pulse" : "bg-status-warning"
           }`}
         />
-        <span className="font-mono text-[11px] text-text-secondary">
-          {online ? "Edge Synced" : "Dexie Offline"}
+        <span className="font-mono text-[11px] text-text-secondary hidden min-[420px]:inline">
+          {online ? "En línea" : "Sin conexión"}
         </span>
         {queued > 0 && (
           <span className="ml-1 px-1.5 py-0.2 rounded-full bg-status-warning/20 text-status-warning font-mono text-[10px] font-semibold">
@@ -74,7 +74,7 @@ export function SyncStatus() {
         >
           sync
         </span>
-        <span className="hidden sm:inline">Sync</span>
+        <span className="hidden md:inline">Sincronizar</span>
       </button>
 
       {lastMessage && (

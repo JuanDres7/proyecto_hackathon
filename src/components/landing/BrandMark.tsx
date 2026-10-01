@@ -37,7 +37,7 @@ export function BrandMark({
       </div>
       {showWordmark && (
         <span className={`font-display font-semibold tracking-tight text-white ${word}`}>
-          Limpi<span className="text-primary">APP</span>
+          Limpi<span className="text-primary">App</span>
         </span>
       )}
     </div>

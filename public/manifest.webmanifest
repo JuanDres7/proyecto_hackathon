@@ -1,6 +1,6 @@
 {
-  "name": "LimpiAPP — Supervisión en campo",
-  "short_name": "LimpiAPP",
+  "name": "LimpiApp — Supervisión en campo",
+  "short_name": "LimpiApp",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

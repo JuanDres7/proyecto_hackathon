@@ -48,7 +48,7 @@ export function LandingPage() {
     <Suspense
       fallback={
         <div className="min-h-screen bg-surface text-white/70 flex items-center justify-center text-sm">
-          Cargando LimpiAPP…
+          Cargando LimpiApp…
         </div>
       }
     >
