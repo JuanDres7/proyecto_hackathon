@@ -3,7 +3,7 @@ import { Leaf, Droplets, Sparkles, ArrowUpRight } from "lucide-react";
 const SERVICES = [
   {
     icon: Sparkles,
-    title: "Aseo General",
+    title: "Aseo general",
     accent: "text-primary",
     ring: "border-primary/25 bg-primary/10",
     body: "Supervisión de rutinas de limpieza con checklists digitalizados, evidencia fotográfica y cumplimiento de SLA por sede.",
@@ -19,7 +19,7 @@ const SERVICES = [
   },
   {
     icon: Droplets,
-    title: "Mantenimiento de Piscinas",
+    title: "Limpieza de piscinas",
     accent: "text-ai-accent",
     ring: "border-ai-accent/25 bg-ai-accent/10",
     body: "Control de parámetros, novedades técnicas y cierre de incidencias con fotos validadas y reporte inmediato al coordinador.",

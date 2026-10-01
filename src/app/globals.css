@@ -77,6 +77,10 @@ body {
   padding: 0;
 }
 
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 .font-display {
   font-family: var(--font-sora), ui-sans-serif, sans-serif;
 }

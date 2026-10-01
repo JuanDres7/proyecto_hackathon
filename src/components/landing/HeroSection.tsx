@@ -22,7 +22,7 @@ const APP_HIGHLIGHTS = [
   {
     icon: ShieldCheck,
     title: "Cumplimiento visible",
-    body: "Supervisa aseo, jardinería y mantenimiento con indicadores que hablan el idioma del negocio.",
+    body: "Supervisa aseo, jardinería y limpieza de piscinas con indicadores que hablan el idioma del negocio.",
     tone: "text-secondary bg-secondary/15 border-secondary/25",
   },
   {
@@ -65,7 +65,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
         <div className="absolute inset-0">
           <Image
             src="/stitch/supervisor_preview.png"
-            alt="Supervisión de servicios en campo con LimpiAPP"
+            alt="Supervisión de servicios en campo con LimpiApp"
             fill
             priority
             className="object-cover object-center"
@@ -90,7 +90,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
             </h1>
 
             <p className="mt-5 text-base md:text-lg text-text-secondary max-w-xl leading-relaxed">
-              LimpiAPP unifica supervisión, coordinación y atención al cliente en
+              LimpiApp unifica supervisión, coordinación y atención al cliente en
               una sola experiencia. Menos incertidumbre en campo, más control
               operativo y mejor servicio para quien contrata.
             </p>
@@ -101,7 +101,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
                 onClick={onLogin}
                 className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-primary hover:bg-primary-container text-on-primary text-sm font-semibold transition-all shadow-lg shadow-primary/30 hover:-translate-y-0.5"
               >
-                Iniciar Sesión
+                Iniciar sesión
                 <ArrowRight size={16} />
               </button>
               <a
@@ -126,7 +126,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
               Una sola plataforma para operar, supervisar y atender
             </h2>
             <p className="mt-3 text-text-secondary leading-relaxed">
-              LimpiAPP está pensada para empresas de servicios que necesitan
+              LimpiApp está pensada para empresas de servicios que necesitan
               demostrar cumplimiento, reducir fricción con el cliente y dar
               herramientas claras a quienes trabajan en territorio.
             </p>
@@ -153,7 +153,7 @@ export function HeroSection({ onLogin }: { onLogin: () => void }) {
 
           <div className="mt-14">
             <h3 className="font-display text-xl font-semibold text-text-primary">
-              ¿Para quién es LimpiAPP?
+              ¿Para quién es LimpiApp?
             </h3>
             <p className="mt-2 text-sm text-text-secondary max-w-xl">
               Al iniciar sesión, entras directo al espacio que corresponde a tu rol.

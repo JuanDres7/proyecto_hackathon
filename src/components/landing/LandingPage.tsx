@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LandingNav } from "./LandingNav";
 import { HeroSection } from "./HeroSection";
@@ -11,28 +11,39 @@ import { LandingFooter } from "./LandingFooter";
 import { LoginModal } from "./LoginModal";
 
 function LandingContent() {
-  const [loginOpen, setLoginOpen] = useState(false);
   const params = useSearchParams();
   const router = useRouter();
+  const loginFromQuery = params.get("login") === "1";
+  const [trackedQuery, setTrackedQuery] = useState(loginFromQuery);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [queryDismissed, setQueryDismissed] = useState(false);
 
-  useEffect(() => {
-    if (params.get("login") === "1") {
-      setLoginOpen(true);
-    }
-  }, [params]);
+  if (loginFromQuery !== trackedQuery) {
+    setTrackedQuery(loginFromQuery);
+    setQueryDismissed(false);
+    setManualOpen(false);
+  }
+
+  const loginOpen = manualOpen || (loginFromQuery && !queryDismissed);
+
+  function openLogin() {
+    setQueryDismissed(false);
+    setManualOpen(true);
+  }
 
   function closeLogin() {
-    setLoginOpen(false);
-    if (params.get("login") === "1") {
+    setManualOpen(false);
+    setQueryDismissed(true);
+    if (loginFromQuery) {
       router.replace("/");
     }
   }
 
   return (
     <div className="min-h-screen bg-surface text-on-surface antialiased">
-      <LandingNav onLogin={() => setLoginOpen(true)} />
+      <LandingNav onLogin={openLogin} />
       <main>
-        <HeroSection onLogin={() => setLoginOpen(true)} />
+        <HeroSection onLogin={openLogin} />
         <AboutSection />
         <ServicesSection />
         <ContactSection />
@@ -48,7 +59,7 @@ export function LandingPage() {
     <Suspense
       fallback={
         <div className="min-h-screen bg-surface text-white/70 flex items-center justify-center text-sm">
-          Cargando LimpiAPP…
+          Cargando LimpiApp…
         </div>
       }
     >

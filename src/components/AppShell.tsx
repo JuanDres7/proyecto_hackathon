@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { SyncStatus } from "./SyncStatus";
+import { BrandMark } from "./landing/BrandMark";
 import type { UserRole } from "@/lib/types";
 
 const ROLE_NAV: Record<
@@ -13,7 +14,7 @@ const ROLE_NAV: Record<
   coordinador: [
     {
       href: "/coordinador",
-      label: "Vista General Ops",
+      label: "Panel",
       icon: "grid_view",
       accent: "text-primary",
     },
@@ -50,6 +51,7 @@ export function AppShell({
   const role = user?.role;
   const isSupervisorRoute = pathname.startsWith("/supervisor");
   const navItems = role ? ROLE_NAV[role] : [];
+  const showMobileNav = navItems.length > 0;
 
   async function handleSignOut() {
     await signOut();
@@ -59,41 +61,18 @@ export function AppShell({
   return (
     <div className="min-h-screen bg-surface text-on-surface antialiased flex flex-col">
       <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-surface/90 backdrop-blur-xl border-b border-border-subtle">
-        <div className="w-full h-16 px-4 md:px-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="w-8 h-8 rounded-lg bg-surface-card border border-border-subtle flex items-center justify-center p-1 group-hover:border-primary transition-colors">
-                <svg viewBox="0 0 100 100" fill="none" className="w-full h-full">
-                  <path
-                    d="M26 50L42 66L74 34"
-                    stroke="#3b82f6"
-                    strokeWidth="8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="32"
-                    stroke="#60a5fa"
-                    strokeWidth="4"
-                    strokeDasharray="8 6"
-                    opacity="0.6"
-                  />
-                  <circle cx="50" cy="50" r="4" fill="#34d399" />
-                </svg>
-              </div>
-              <span className="text-base font-semibold text-white tracking-tight">
-                Limpi<span className="text-primary">APP</span>
-              </span>
+        <div className="w-full h-16 px-3 sm:px-4 md:px-6 flex items-center justify-between gap-2 sm:gap-4 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <Link href="/" className="shrink-0" aria-label="LimpiApp inicio">
+              <BrandMark size="sm" />
             </Link>
 
-            <span className="text-xs font-mono text-text-secondary hidden md:inline">
+            <span className="text-xs font-mono text-text-secondary hidden md:inline truncate">
               / {title}
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
             <SyncStatus />
 
             <div className="flex items-center gap-2 pl-2 border-l border-border-subtle">
@@ -167,27 +146,30 @@ export function AppShell({
               </nav>
             </div>
 
-            <div className="p-3 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col gap-2">
-              <div className="flex items-center justify-between">
+            <div className="p-3 rounded-xl bg-surface-container-low border border-border-subtle flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-[10px] text-text-secondary">
-                  Buffer local
+                  Datos locales
                 </span>
                 <span className="font-mono text-[10px] text-secondary font-semibold">
-                  Offline-ready
+                  Activo
                 </span>
               </div>
-              <div className="w-full bg-surface-container h-1 rounded-full overflow-hidden">
-                <div className="bg-secondary h-full w-full" />
-              </div>
-              <p className="text-[10px] text-white/75">PWA Offline-First activa</p>
+              <p className="text-[10px] text-white/75 leading-snug">
+                Puedes trabajar sin señal. Los datos se sincronizan después.
+              </p>
             </div>
           </aside>
         )}
 
         <main
-          className={`flex-1 w-full min-h-[calc(100vh-4rem)] bg-surface ${
+          className={`flex-1 w-full min-w-0 min-h-[calc(100vh-4rem)] bg-surface ${
             !isSupervisorRoute ? "lg:pl-60" : ""
-          } ${isSupervisorRoute ? "pb-20" : "pb-8"}`}
+          } ${
+            showMobileNav
+              ? "pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-8"
+              : "pb-8"
+          }`}
         >
           <div className="w-full px-4 md:px-6 py-6 max-w-7xl mx-auto">
             {children}
@@ -195,32 +177,33 @@ export function AppShell({
         </main>
       </div>
 
-      {/* Mobile bottom nav: only current role */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 h-16 bg-surface-container-lowest/95 backdrop-blur-md border-t border-border-subtle flex items-center justify-around px-2 pb-safe">
-        {navItems.map((item) => {
-          const active = pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex flex-col items-center gap-1 text-[11px] font-medium transition-colors ${
-                active ? "text-primary font-semibold" : "text-white/70 hover:text-white"
-              }`}
-            >
-              <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => void handleSignOut()}
-          className="flex flex-col items-center gap-1 text-[11px] font-medium text-white/70 hover:text-white transition-colors"
-        >
-          <span className="material-symbols-outlined text-[20px]">logout</span>
-          <span>Salir</span>
-        </button>
-      </nav>
+      {showMobileNav && (
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface-container-lowest/95 backdrop-blur-md border-t border-border-subtle flex items-stretch justify-around px-2 pt-1.5 pb-safe">
+          {navItems.map((item) => {
+            const active = pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex flex-col items-center justify-center gap-1 min-w-0 px-2 py-1.5 text-[11px] font-medium leading-tight text-center transition-colors ${
+                  active ? "text-primary font-semibold" : "text-white/70 hover:text-white"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
+                <span className="truncate max-w-full">{item.label}</span>
+              </Link>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => void handleSignOut()}
+            className="flex flex-col items-center justify-center gap-1 min-w-0 px-2 py-1.5 text-[11px] font-medium leading-tight text-white/70 hover:text-white transition-colors"
+          >
+            <span className="material-symbols-outlined text-[20px]">logout</span>
+            <span>Salir</span>
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

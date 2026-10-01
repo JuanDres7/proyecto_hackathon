@@ -16,11 +16,11 @@ const jakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "LimpiAPP — Supervisión Inteligente de Servicios en Campo",
+  title: "LimpiApp — Supervisión inteligente de servicios en campo",
   description:
-    "Plataforma comercial para trazabilidad operativa, control territorial offline-first y asistencia con IA en aseo, jardinería y mantenimiento.",
+    "Plataforma para trazabilidad operativa, control territorial sin conexión y asistencia con IA en aseo, jardinería y limpieza de piscinas.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "LimpiAPP" },
+  appleWebApp: { capable: true, title: "LimpiApp" },
 };
 
 export const viewport: Viewport = {

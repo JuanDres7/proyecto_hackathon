@@ -31,7 +31,7 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
       }`}
     >
       <div className="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between gap-4">
-        <a href="#inicio" className="shrink-0" aria-label="LimpiAPP inicio">
+        <a href="#inicio" className="shrink-0 min-w-0" aria-label="LimpiApp inicio">
           <BrandMark size="sm" />
         </a>
 
@@ -51,9 +51,10 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
           <button
             type="button"
             onClick={onLogin}
-            className="inline-flex items-center px-4 py-2 rounded-lg bg-primary hover:bg-primary-container text-on-primary text-sm font-semibold transition-colors shadow-md shadow-primary/25"
+            className="inline-flex items-center px-3 sm:px-4 py-2 rounded-lg bg-primary hover:bg-primary-container text-on-primary text-sm font-semibold transition-colors shadow-md shadow-primary/25"
           >
-            Iniciar Sesión
+            <span className="sm:hidden">Entrar</span>
+            <span className="hidden sm:inline">Iniciar sesión</span>
           </button>
           <button
             type="button"
@@ -86,7 +87,7 @@ export function LandingNav({ onLogin }: { onLogin: () => void }) {
             }}
             className="mt-2 px-3 py-2.5 rounded-lg bg-primary text-on-primary text-sm font-semibold text-left"
           >
-            Iniciar Sesión
+            Iniciar sesión
           </button>
         </div>
       )}
