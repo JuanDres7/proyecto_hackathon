@@ -1,0 +1,138 @@
+[
+  {
+    "name": "function_search_path_mutable",
+    "title": "Function Search Path Mutable",
+    "level": "WARN",
+    "facing": "EXTERNAL",
+    "categories": [
+      "SECURITY"
+    ],
+    "description": "Detects functions where the search_path parameter is not set.",
+    "detail": "Function \\`public.set_updated_at\\` has a role mutable search_path",
+    "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable",
+    "metadata": {
+      "schema": "public",
+      "name": "set_updated_at",
+      "type": "function"
+    },
+    "cache_key": "function_search_path_mutable_public_set_updated_at_204b9b9355e61b7541bc0633bbc9294c",
+    "observed_at": "2026-10-01T19:05:18.646Z"
+  },
+  {
+    "name": "function_search_path_mutable",
+    "title": "Function Search Path Mutable",
+    "level": "WARN",
+    "facing": "EXTERNAL",
+    "categories": [
+      "SECURITY"
+    ],
+    "description": "Detects functions where the search_path parameter is not set.",
+    "detail": "Function \\`public.flag_novedad_alert\\` has a role mutable search_path",
+    "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0011_function_search_path_mutable",
+    "metadata": {
+      "schema": "public",
+      "name": "flag_novedad_alert",
+      "type": "function"
+    },
+    "cache_key": "function_search_path_mutable_public_flag_novedad_alert_44704c467a310efdf88edbbc1303a1be",
+    "observed_at": "2026-10-01T19:05:18.646Z"
+  },
+  {
+    "name": "rls_policy_always_true",
+    "title": "RLS Policy Always True",
+    "level": "WARN",
+    "facing": "EXTERNAL",
+    "categories": [
+      "SECURITY"
+    ],
+    "description": "Detects RLS policies that use overly permissive expressions like \\`USING (true)\\` or \\`WITH CHECK (true)\\` for UPDATE, DELETE, or INSERT operations. SELECT policies with \\`USING (true)\\` are intentionally excluded as this pattern is often used deliberately for public read access.",
+    "detail": "Table `public.complaints` has an RLS policy `insert complaints` for `INSERT` that allows unrestricted access (WITH CHECK clause is always true). This effectively bypasses row-level security for -.",
+    "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0024_permissive_rls_policy",
+    "metadata": {
+      "schema": "public",
+      "name": "complaints",
+      "type": "table",
+      "qual": null,
+      "roles": [
+        "-"
+      ],
+      "command": "INSERT",
+      "with_check": "true",
+      "policy_name": "insert complaints",
+      "permissive_using": false,
+      "permissive_with_check": true
+    },
+    "cache_key": "rls_policy_always_true_public_complaints_insert complaints",
+    "observed_at": "2026-10-01T19:05:18.646Z"
+  },
+  {
+    "name": "rls_policy_always_true",
+    "title": "RLS Policy Always True",
+    "level": "WARN",
+    "facing": "EXTERNAL",
+    "categories": [
+      "SECURITY"
+    ],
+    "description": "Detects RLS policies that use overly permissive expressions like \\`USING (true)\\` or \\`WITH CHECK (true)\\` for UPDATE, DELETE, or INSERT operations. SELECT policies with \\`USING (true)\\` are intentionally excluded as this pattern is often used deliberately for public read access.",
+    "detail": "Table `public.service_orders` has an RLS policy `public service orders insert` for `INSERT` that allows unrestricted access (WITH CHECK clause is always true). This effectively bypasses row-level security for -.",
+    "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0024_permissive_rls_policy",
+    "metadata": {
+      "schema": "public",
+      "name": "service_orders",
+      "type": "table",
+      "qual": null,
+      "roles": [
+        "-"
+      ],
+      "command": "INSERT",
+      "with_check": "true",
+      "policy_name": "public service orders insert",
+      "permissive_using": false,
+      "permissive_with_check": true
+    },
+    "cache_key": "rls_policy_always_true_public_service_orders_public service orders insert",
+    "observed_at": "2026-10-01T19:05:18.646Z"
+  },
+  {
+    "name": "anon_security_definer_function_executable",
+    "title": "Public Can Execute SECURITY DEFINER Function",
+    "level": "WARN",
+    "facing": "EXTERNAL",
+    "categories": [
+      "SECURITY"
+    ],
+    "description": "Detects `SECURITY DEFINER` functions that are callable without signing in. Revoke `EXECUTE`, switch the function to `SECURITY INVOKER`, or move it out of your exposed API schema if it is not meant to be public.",
+    "detail": "Function `public.handle_new_user()` can be executed by the `anon` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/handle_new_user`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+    "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable",
+    "metadata": {
+      "schema": "public",
+      "name": "handle_new_user",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    "cache_key": "anon_security_definer_function_executable_public_handle_new_user_",
+    "observed_at": "2026-10-01T19:05:18.646Z"
+  },
+  {
+    "name": "authenticated_security_definer_function_executable",
+    "title": "Signed-In Users Can Execute SECURITY DEFINER Function",
+    "level": "WARN",
+    "facing": "EXTERNAL",
+    "categories": [
+      "SECURITY"
+    ],
+    "description": "Detects `SECURITY DEFINER` functions that are callable by signed-in users. Revoke `EXECUTE`, switch the function to `SECURITY INVOKER`, or move it out of your exposed API schema if signed-in users should not call it.",
+    "detail": "Function `public.handle_new_user()` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/handle_new_user`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+    "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+    "metadata": {
+      "schema": "public",
+      "name": "handle_new_user",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    "cache_key": "authenticated_security_definer_function_executable_public_handle_new_user_",
+    "observed_at": "2026-10-01T19:05:18.646Z"
+  }
+]

@@ -1,699 +1,489 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { ChatMessage, ChatState } from "@/lib/types";
+import { CANCELLATION_REASONS, SERVICE_CATALOG, serviceLabels } from "@/lib/catalog";
+import { requiredQuoteFields } from "@/lib/quote-fields";
+import type { ChatMessage, ChatState, QuoteDraft } from "@/lib/types";
 
 const STATES: { id: ChatState; num: string; label: string; hint: string }[] = [
   {
     id: "cotizacion",
     num: "1",
-    label: "Cotización Asistida",
-    hint: "Describe el servicio requerido. El asistente generará el presupuesto algorítmico y emitirá tu token de servicio.",
+    label: "Cotización",
+    hint: "Completa tus datos y confirma con sí o no. El código lo emite el sistema, no el chat.",
   },
   {
-    id: "seguimiento",
+    id: "progreso",
     num: "2",
-    label: "Seguimiento en Vivo",
-    hint: "Consulta en tiempo real la geocerca, hora estimada y estado operativo de la cuadrilla asignada.",
+    label: "Progreso",
+    hint: "Consulta un código. El estado sale de la solicitud y de la visita ya sincronizada.",
   },
   {
-    id: "cierre",
+    id: "finalizacion",
     num: "3",
-    label: "Calificación & IA CSAT",
-    hint: "Envía observaciones o adjunta fotografías de anomalías. Gemini Vision + NLP validarán la correlación técnica.",
+    label: "Cierre y evaluación",
+    hint: "Al finalizar verás actividades y fotos. Envía de 1 a 5 estrellas, comentario y foto opcional.",
   },
 ];
 
-const PROMPT_SUGGESTIONS = [
-  { label: "⏱️ Tiempo Restante", text: "¿A qué hora aproximada finaliza la inspección en la subestación?" },
-  { label: "📄 Pre-informe PDF", text: "Solicito descargar el acta técnica preliminar de las pruebas." },
-  { label: "📸 Añadir Fotografía", text: "Adjunto evidencia fotográfica del transformador para validación con Gemini Vision." },
-];
+function emptyDraft(): QuoteDraft {
+  return {
+    draftId: crypto.randomUUID(),
+    services: [],
+    status: "draft",
+  };
+}
+
+function formatWhen(iso?: string) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleString("es-CO");
+  } catch {
+    return iso;
+  }
+}
 
 export function ClientChat() {
   const [state, setState] = useState<ChatState>("cotizacion");
-  const [serviceNumber, setServiceNumber] = useState("SRV-8942-BOG");
+  const [draft, setDraft] = useState<QuoteDraft>(emptyDraft);
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "init-1",
       role: "assistant",
       content:
-        "¡Hola! He evaluado las especificaciones de inspección perimetral y termográfica para la Subestación Norte Bogotá. Conforme al volumen de activos y protocolo RETIE, el presupuesto computado es de $145.00 USD (Aprobado con Crédito Corp). Token de Reserva emitido: SRV-8942-BOG.",
-      createdAt: "08:29 AM",
+        "Hola. Soy el chat de LimpiApp. Indica nombre, identificación, correo, teléfono, mensaje, servicios (aseo general, jardinería y/o limpieza de piscinas), fecha, hora y ubicación. Las observaciones de acceso son opcionales.",
+      createdAt: nowStamp(),
     },
   ]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [stars, setStars] = useState(5);
-  const [selectedTags, setSelectedTags] = useState<string[]>([
-    "Puntualidad Geocerca",
-    "Claridad Técnica",
-    "Resolución Inconsistencia IA",
-  ]);
-  const [csatSubmitted, setCsatSubmitted] = useState(false);
+  const [comment, setComment] = useState("");
+  const [evalDone, setEvalDone] = useState(false);
+  const [progressText, setProgressText] = useState("");
+  const [closure, setClosure] = useState<{
+    activities: string;
+    photosNote: string;
+  } | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [draftLockedByRoute, setDraftLockedByRoute] = useState(false);
 
   const activeHint = useMemo(
     () => STATES.find((s) => s.id === state)?.hint ?? "",
     [state],
   );
 
-  async function send() {
-    if (!input.trim() && !image) return;
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: input.trim(),
-      imageDataUrl: image,
-      createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
+  function push(role: ChatMessage["role"], content: string) {
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role, content, createdAt: nowStamp() },
+    ]);
+  }
 
-    setMessages((prev) => [...prev, userMsg]);
+  function patchDraft(p: Partial<QuoteDraft>) {
+    setDraft((d) => ({ ...d, ...p }));
+  }
+
+  function toggleService(id: string) {
+    setDraft((d) => ({
+      ...d,
+      services: d.services.includes(id)
+        ? d.services.filter((x) => x !== id)
+        : [...d.services, id],
+    }));
+  }
+
+  async function askSummary() {
+    const missing = requiredQuoteFields(draft);
+    if (missing.length) {
+      push("assistant", `Faltan datos obligatorios: ${missing.join(", ")}. No se emite código hasta completarlos.`);
+      setAwaitingConfirm(false);
+      return;
+    }
+    setAwaitingConfirm(true);
+    await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", draft: { ...draft, status: "pending_confirmation" } }),
+    });
+    push(
+      "assistant",
+      `Resumen:\n• Nombre: ${draft.customerName}\n• Identificación: ${draft.customerDocument}\n• Correo: ${draft.email}\n• Teléfono: ${draft.phone}\n• Mensaje: ${draft.openingMessage}\n• Servicios: ${serviceLabels(draft.services)}\n• Fecha y hora: ${formatWhen(draft.scheduledAt)}\n• Ubicación: ${draft.location}\n• Acceso: ${draft.accessNotes || "sin observaciones"}\n\n¿Confirmas? Responde sí o no.`,
+    );
+  }
+
+  async function confirmYes() {
+    const res = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "confirm", draft }),
+    });
+    const json = (await res.json()) as { ok: boolean; serviceNumber?: string; missing?: string[] };
+    if (!json.ok) {
+      push("assistant", `No se puede confirmar. Faltan: ${(json.missing ?? []).join(", ")}.`);
+      return;
+    }
+    setDraft((d) => ({ ...d, serviceNumber: json.serviceNumber, status: "confirmed" }));
+    setAwaitingConfirm(false);
+    push("assistant", `Solicitud confirmada. Tu código es ${json.serviceNumber}. El supervisor verá Servicio ${json.serviceNumber}. Confirmar de nuevo no emite otro código.`);
+  }
+
+  async function confirmNo() {
+    setAwaitingConfirm(false);
+    await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reject", draft }),
+    });
+    push("assistant", "No se emitió código. Corrige los datos y vuelve a pedir el resumen.");
+  }
+
+  async function sendQuoteText() {
+    if (!input.trim()) return;
+    const text = input.trim();
+    push("user", text);
     setInput("");
+    const lower = text.toLowerCase();
+    if (awaitingConfirm) {
+      if (["si", "sí", "yes"].includes(lower)) {
+        await confirmYes();
+        return;
+      }
+      if (["no"].includes(lower)) {
+        await confirmNo();
+        return;
+      }
+    }
     setBusy(true);
-
     try {
-      const geminiRes = await fetch("/api/gemini", {
+      const res = await fetch("/api/chat/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          state,
-          messages: [...messages, userMsg].map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          image,
-          serviceNumber: serviceNumber || undefined,
-        }),
+        body: JSON.stringify({ text }),
       });
-
-      const gemini = (await geminiRes.json()) as {
-        reply: string;
-        serviceNumber?: string;
-      };
-
-      if (gemini.serviceNumber) setServiceNumber(gemini.serviceNumber);
-
-      let extra = "";
-      if (state === "cierre" && userMsg.content) {
-        try {
-          const nlpRes = await fetch("/api/nlp", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text: userMsg.content,
-              serviceNumber: gemini.serviceNumber ?? serviceNumber,
-            }),
-          });
-          const nlp = (await nlpRes.json()) as { label?: string; confidence?: number };
-          if (nlp.label) {
-            extra = `\n\n[Clasificación NLP Sentence Transformers]: ${nlp.label} (Confianza ${(
-              (nlp.confidence ?? 0.94) * 100
-            ).toFixed(1)}%). Vector similitud verificado.`;
-          }
-        } catch {
-          // ignore nlp fetch errors
-        }
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `${gemini.reply || "Consulta procesada con éxito por el Edge Worker."}${extra}`,
-          createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
-      setImage(undefined);
-    } catch {
-      // Fallback response for hackathon demo if API endpoint is unconfigured
-      let fallback = "Consulta procesada en modo seguro.";
-      if (state === "cotizacion") {
-        fallback =
-          "Presupuesto validado por Supabase Edge Functions. Se han programado 1x Supervisor Nivel III para la Subestación Norte.";
-      } else if (state === "seguimiento") {
-        fallback =
-          "El supervisor Ing. Carlos Mendoza (Cuadrilla 4) arribó a la geocerca de la Subestación Norte a las 10:02 AM e inició check-in biométrico y calibración de instrumentos (Garita #2, GPS Lock ±1.8m).";
-      } else {
-        fallback =
-          "Gemini Vision + FastAPI NLP: Análisis multivariante completado con 94% de confianza. La anomalía fue clasificada como exudación dieléctrica y agregada a la orden de trabajo con adenda automática.";
-      }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: fallback,
-          createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
-      setImage(undefined);
+      const json = (await res.json()) as { extracted: Partial<QuoteDraft> };
+      const e = json.extracted;
+      setDraft((d) => ({
+        ...d,
+        customerName: e.customerName || d.customerName,
+        customerDocument: e.customerDocument || d.customerDocument,
+        email: e.email || d.email,
+        phone: e.phone || d.phone,
+        openingMessage: e.openingMessage || d.openingMessage || text,
+        services: e.services?.length ? e.services : d.services,
+        scheduledAt: e.scheduledAt || d.scheduledAt,
+        location: e.location || d.location,
+        accessNotes: e.accessNotes || d.accessNotes,
+      }));
+      push("assistant", "Actualicé el formulario con lo que pude leer. Completa lo que falte y pulsa Ver resumen. El modelo no asigna código.");
     } finally {
       setBusy(false);
     }
   }
 
-  function toggleTag(tag: string) {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
+  async function queryProgress(code: string) {
+    const res = await fetch("/api/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serviceNumber: code }),
+    });
+    const json = (await res.json()) as {
+      status: string;
+      message: string;
+      visit?: { contractedActivity?: string | null; checkOutAt?: string | null } | null;
+    };
+    setProgressText(json.message);
+    if (json.status === "pendiente_sincronizacion") {
+      setDraftLockedByRoute(true);
+    }
+    if (json.status === "finalizado" && json.visit) {
+      setClosure({
+        activities: json.visit.contractedActivity || "Actividades registradas en la visita.",
+        photosNote: "Fotos de antes y después: las que existan en evidencias de la visita sincronizada.",
+      });
+    }
+    push("assistant", json.message);
+    if (json.status === "finalizado") {
+      push(
+        "assistant",
+        `Cierre del servicio ${code.startsWith("#") ? code : `#${code}`}. Actividades: ${json.visit?.contractedActivity || "las registradas en la visita"}. ${ "Fotos de antes y después: las que existan en el depósito." }`,
+      );
+      setState("finalizacion");
+    }
+  }
+
+  async function sendEval() {
+    if (!draft.serviceNumber) {
+      push("assistant", "Indica el código del servicio para evaluar.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceNumber: draft.serviceNumber,
+          rating: stars,
+          comment,
+          image,
+        }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string; pqr?: boolean };
+      if (json.error === "ya_enviada") {
+        push("assistant", "La evaluación de este código ya fue enviada. Se conserva la primera.");
+        setEvalDone(true);
+        return;
+      }
+      if (!json.ok) {
+        push("assistant", "No se pudo guardar la evaluación.");
+        return;
+      }
+      setEvalDone(true);
+      push(
+        "assistant",
+        json.pqr
+          ? "Evaluación guardada. Se abrió un caso de prioridad alta en la cola de peticiones, quejas y reclamos."
+          : "Evaluación guardada. No se abre caso PQR con 3, 4 o 5 estrellas.",
+      );
+    } finally {
+      setBusy(false);
+      setImage(undefined);
+    }
+  }
+
+  async function doCancel() {
+    if (!cancelReason) {
+      push("assistant", "Cancelar sin motivo no deja la solicitud cancelada. Elige un motivo.");
+      return;
+    }
+    const res = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "cancel", draft, reason: cancelReason }),
+    });
+    const json = (await res.json()) as { ok: boolean; error?: string };
+    if (json.error === "en_ruta") {
+      push("assistant", "El supervisor ya está en ruta. No se puede editar ni cancelar.");
+      setDraftLockedByRoute(true);
+      return;
+    }
+    if (json.ok) {
+      setDraft((d) => ({ ...d, status: "cancelled" }));
+      push("assistant", "Solicitud cancelada con el motivo indicado.");
+    }
   }
 
   return (
     <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full">
-      {/* 1. Top Contextual Control Bar & State Switcher */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4 bg-surface-card rounded-xl border border-border-subtle shadow-md">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-surface-container-high border border-border-subtle flex items-center justify-center text-primary shrink-0">
-            <span className="material-symbols-outlined text-[22px]">smart_toy</span>
-          </div>
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-semibold text-text-primary tracking-tight">
-                Portal Cliente FieldOps
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-surface-container font-mono text-xs text-primary font-medium border border-border-subtle">
-                {serviceNumber}
-              </span>
-              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-container-low text-secondary font-mono text-[11px] border border-secondary/30">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
-                En Ejecución
-              </span>
-            </div>
-            <p className="text-xs text-text-secondary truncate mt-0.5">
-              Inspección Estructural Red Eléctrica Subestación Norte • Transmisión Andina S.A.
-            </p>
-          </div>
+        <div>
+          <p className="text-sm font-semibold text-text-primary">Chat del cliente LimpiApp</p>
+          <p className="text-xs text-text-secondary mt-1">
+            {draft.serviceNumber ? `Código ${draft.serviceNumber}` : "Sin código (borrador)"}
+          </p>
         </div>
-
-        {/* State Pill Switcher */}
-        <div className="flex items-center gap-1 p-1 bg-surface-container-lowest rounded-xl border border-border-subtle w-full md:w-auto overflow-x-auto">
+        <div className="flex items-center gap-1 p-1 bg-surface-container-lowest rounded-xl border border-border-subtle">
           {STATES.map((st) => (
             <button
               key={st.id}
               type="button"
               onClick={() => setState(st.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
                 state === st.id
-                  ? "bg-surface-container-high text-text-primary border border-border-subtle shadow-sm"
-                  : "text-text-muted hover:text-text-primary"
+                  ? "bg-surface-container-high text-text-primary border border-border-subtle"
+                  : "text-text-muted"
               }`}
             >
-              <span
-                className={`w-4 h-4 rounded-full font-mono text-[10px] flex items-center justify-center ${
-                  state === st.id
-                    ? "bg-primary text-on-primary font-bold"
-                    : "bg-surface-container-high text-text-secondary"
-                }`}
-              >
-                {st.num}
-              </span>
-              <span>{st.label}</span>
+              {st.num}. {st.label}
             </button>
           ))}
         </div>
       </div>
+      <p className="text-xs text-text-secondary">{activeHint}</p>
 
-      {/* 2. Dual Layout Grid: Left Panel (Chat) & Right Panel (Timeline & CSAT) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* LEFT PANEL: 7 Cols (~58%) - Gemini Multimodal Chatbot */}
-        <section className="lg:col-span-7 flex flex-col bg-surface-card rounded-xl border border-border-subtle shadow-xl overflow-hidden min-w-0">
-          {/* Chat Header */}
-          <div className="p-4 bg-surface-container-lowest border-b border-border-subtle flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="relative w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-ai-accent shrink-0">
-                <span className="material-symbols-outlined text-[18px]">psychology</span>
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-secondary ring-2 ring-surface-card" />
-              </div>
-              <div className="flex flex-col min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-text-primary truncate">
-                    Asistente Virtual FieldOps
-                  </span>
-                  <span className="px-1.5 py-0.2 rounded font-mono text-[10px] uppercase bg-surface-container text-ai-accent border border-ai-accent/30">
-                    Gemini 1.5 Pro
-                  </span>
-                </div>
-                <span className="font-mono text-[10px] text-text-muted flex items-center gap-1">
-                  <span className="w-1 h-1 rounded-full bg-secondary" />
-                  Supabase Edge Functions (<span className="text-text-secondary">latency: 42ms</span>)
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => window.alert("Registro de conversación descargado en formato JSON.")}
-                className="w-7 h-7 rounded-lg bg-surface-container-low hover:bg-surface-container flex items-center justify-center text-text-secondary hover:text-text-primary border border-border-subtle transition-colors cursor-pointer"
-                title="Descargar Registro"
-              >
-                <span className="material-symbols-outlined text-[16px]">sim_card_download</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setMessages([
-                    {
-                      id: crypto.randomUUID(),
-                      role: "assistant",
-                      content: "Sesión reiniciada. ¿En qué puedo asistirte con tu orden técnica?",
-                      createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                    },
-                  ])
-                }
-                className="w-7 h-7 rounded-lg bg-surface-container-low hover:bg-surface-container flex items-center justify-center text-text-secondary hover:text-text-primary border border-border-subtle transition-colors cursor-pointer"
-                title="Reiniciar Sesión"
-              >
-                <span className="material-symbols-outlined text-[16px]">refresh</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Hint Strip */}
-          <div className="bg-surface-container-low/60 px-4 py-2 text-[11px] text-text-secondary border-b border-border-subtle flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[15px] text-primary">info</span>
-            <span>{activeHint}</span>
-          </div>
-
-          {/* Chat Transcript Scroll Zone */}
-          <div className="p-4 flex flex-col gap-4 max-h-[560px] min-h-[400px] overflow-y-auto bg-surface-container-lowest/50">
-            {messages.map((msg) => {
-              const isUser = msg.role === "user";
-              return (
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <section className="lg:col-span-7 flex flex-col bg-surface-card rounded-xl border border-border-subtle min-h-[420px]">
+          <div className="p-4 flex-1 overflow-y-auto space-y-3 max-h-[520px]">
+            {messages.map((msg) => (
+              <div key={msg.id} className={`text-xs leading-relaxed ${msg.role === "user" ? "text-right" : ""}`}>
                 <div
-                  key={msg.id}
-                  className={`flex items-start gap-2.5 max-w-[92%] ${
-                    isUser ? "self-end flex-row-reverse" : "self-start"
+                  className={`inline-block p-3 rounded-xl whitespace-pre-wrap ${
+                    msg.role === "user" ? "bg-surface-muted" : "bg-surface-container-low"
                   }`}
                 >
-                  <div
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                      isUser
-                        ? "bg-surface-container-high text-text-primary border border-border-subtle"
-                        : "bg-surface-container text-ai-accent border border-border-subtle"
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">
-                      {isUser ? "person" : "neurology"}
-                    </span>
-                  </div>
-
-                  <div className={`flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}>
-                    <div
-                      className={`p-3.5 rounded-xl shadow-sm text-xs leading-relaxed ${
-                        isUser
-                          ? "bg-surface-muted text-text-primary border border-border-subtle"
-                          : "bg-surface-container-low text-text-primary border border-border-subtle"
-                      }`}
-                    >
-                      {msg.imageDataUrl && (
-                        <div className="mb-2 max-w-xs rounded-lg overflow-hidden border border-border-subtle">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={msg.imageDataUrl}
-                            alt="Evidencia adjunta"
-                            className="w-full max-h-48 object-cover"
-                          />
-                        </div>
-                      )}
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
-
-                      {/* State 1: Interactive Quote Payload Embed if matching text */}
-                      {msg.content.includes("$145.00 USD") && (
-                        <div className="mt-3 p-3 rounded-lg bg-surface-card border border-border-subtle flex flex-col gap-2">
-                          <div className="flex items-center justify-between pb-1 border-b border-border-subtle">
-                            <div>
-                              <span className="text-[10px] font-mono text-text-muted uppercase">
-                                Servicio Técnico Especializado
-                              </span>
-                              <h4 className="text-xs font-semibold text-text-primary">
-                                Inspección Estructural & Red Eléctrica
-                              </h4>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-base font-bold text-secondary font-mono">
-                                $145.00 USD
-                              </span>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-1 text-[11px] text-text-secondary">
-                            <span className="flex items-center gap-1">✓ 1x Supervisor Nivel III</span>
-                            <span className="flex items-center gap-1">✓ Duración: ~3.5 horas</span>
-                            <span className="flex items-center gap-1">✓ Validación Gemini Vision</span>
-                            <span className="flex items-center gap-1">✓ SLA Respuesta &lt;60min</span>
-                          </div>
-                          <div className="pt-2 flex items-center justify-between border-t border-border-subtle">
-                            <span className="font-mono text-[10px] text-secondary">
-                              Token: {serviceNumber}
-                            </span>
-                            <span className="px-2 py-0.5 rounded bg-primary/20 text-primary text-[10px] font-medium font-mono">
-                              Aprobado con Crédito Corp
-                            </span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <span className="text-[10px] font-mono text-text-muted">{msg.createdAt}</span>
-                  </div>
+                  {msg.content}
                 </div>
-              );
-            })}
-          </div>
-
-          {/* Chat Input Footer */}
-          <div className="p-3 bg-surface-card border-t border-border-subtle flex flex-col gap-2.5">
-            {/* Quick Suggestions Chips */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-              <span className="font-mono text-[10px] text-text-muted uppercase shrink-0">
-                Sugerencias:
-              </span>
-              {PROMPT_SUGGESTIONS.map((sug) => (
-                <button
-                  key={sug.label}
-                  type="button"
-                  onClick={() => setInput(sug.text)}
-                  className="px-2.5 py-1 rounded-full bg-surface-container hover:bg-surface-container-high text-[11px] text-text-secondary hover:text-text-primary border border-border-subtle whitespace-nowrap transition-colors cursor-pointer"
-                >
-                  {sug.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Attached Image Preview */}
-            {image && (
-              <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-border-active">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image} alt="Adjunto" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setImage(undefined)}
-                  className="absolute top-0.5 right-0.5 bg-black/70 rounded-full w-4 h-4 flex items-center justify-center text-white text-[10px]"
-                >
-                  ×
-                </button>
+                <div className="text-[10px] font-mono text-text-muted mt-1">{msg.createdAt}</div>
               </div>
-            )}
-
-            {/* Input Bar */}
-            <div className="flex items-center gap-2 bg-surface-container-lowest p-1.5 rounded-xl border border-border-subtle shadow-inner">
-              <label
-                className="w-8 h-8 rounded-lg bg-surface-container-low hover:bg-surface-container text-text-secondary hover:text-text-primary flex items-center justify-center transition-colors cursor-pointer"
-                title="Adjuntar Fotografía para Gemini Vision"
-              >
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = () => setImage(String(reader.result));
-                    reader.readAsDataURL(file);
-                  }}
-                />
-                <span className="material-symbols-outlined text-[18px]">add_photo_alternate</span>
-              </label>
-
+            ))}
+          </div>
+          {state === "cotizacion" && (
+            <div className="p-3 border-t border-border-subtle flex gap-2">
               <input
-                className="flex-1 bg-transparent px-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none"
-                placeholder={
-                  state === "cotizacion"
-                    ? "Describe el servicio que necesitas cotizar..."
-                    : state === "seguimiento"
-                    ? "¿Cuál es el estado o ETA del servicio?"
-                    : "Describe tu observación o queja con foto..."
-                }
+                className="flex-1 bg-transparent px-2 text-xs"
+                placeholder="Escribe datos o sí / no"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.key === "Enter") {
                     e.preventDefault();
-                    void send();
+                    void sendQuoteText();
                   }
                 }}
               />
-
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void send()}
-                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs font-semibold hover:bg-primary-container transition-all flex items-center gap-1 shadow-md disabled:opacity-50 cursor-pointer"
+                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
+                onClick={() => void sendQuoteText()}
               >
-                <span>{busy ? "..." : "Enviar"}</span>
-                <span className="material-symbols-outlined text-[14px]">arrow_upward</span>
+                Enviar
               </button>
             </div>
-          </div>
-        </section>
-
-        {/* RIGHT PANEL: 5 Cols (~42%) - Service Timeline & AI-CSAT Closure */}
-        <section className="lg:col-span-5 flex flex-col gap-6 min-w-0">
-          {/* Service Information Card */}
-          <div className="p-4 bg-surface-card rounded-xl border border-border-subtle shadow-md flex flex-col gap-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex flex-col">
-                <span className="font-mono text-xs text-primary font-medium tracking-wide">
-                  ORDEN ACTIVA #{serviceNumber}
-                </span>
-                <h3 className="text-sm font-semibold text-text-primary">
-                  Inspección Subestación Norte
-                </h3>
-                <span className="text-[11px] text-text-secondary">
-                  Contrato Marco de Mantenimiento #CM-408
-                </span>
-              </div>
-              <div className="px-2 py-0.5 rounded bg-secondary/10 text-secondary font-mono text-[11px] flex items-center gap-1 border border-secondary/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-                SLA 98.4%
-              </div>
-            </div>
-
-            {/* Supervisor Field Micro-badge */}
-            <div className="p-2.5 rounded-lg bg-surface-container-low border border-border-subtle flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-full bg-surface-container-high border border-border-subtle flex items-center justify-center text-primary font-bold text-xs">
-                  CM
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-xs font-semibold text-text-primary">
-                    Ing. Carlos Mendoza
-                  </span>
-                  <span className="font-mono text-[10px] text-text-muted">
-                    Cuadrilla Móvil #4 • Cert. RETIE Nivel III
-                  </span>
-                </div>
-              </div>
+          )}
+          {state === "progreso" && (
+            <div className="p-3 border-t border-border-subtle flex gap-2">
+              <input
+                className="flex-1 bg-transparent px-2 text-xs"
+                placeholder="Código, por ejemplo 3000 o #3000"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const code = input.trim();
+                    push("user", code);
+                    setInput("");
+                    void queryProgress(code);
+                  }
+                }}
+              />
               <button
                 type="button"
-                onClick={() => window.alert("Conectando canal de radio frecuencia...")}
-                className="w-8 h-8 rounded-lg bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors border border-border-subtle cursor-pointer"
-                title="Contactar Radio Frecuencia"
+                className="px-3 py-1.5 bg-primary text-on-primary rounded-lg text-xs"
+                onClick={() => {
+                  const code = input.trim();
+                  push("user", code);
+                  setInput("");
+                  void queryProgress(code);
+                }}
               >
-                <span className="material-symbols-outlined text-[18px]">phone_in_talk</span>
+                Consultar
               </button>
             </div>
-          </div>
+          )}
+        </section>
 
-          {/* Vertical Stepper: Service Execution Timeline */}
-          <div className="p-4 bg-surface-card rounded-xl border border-border-subtle shadow-md flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-text-primary flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-primary text-[18px]">
-                  timeline
-                </span>
-                <span>Línea de Vida Operativa</span>
-              </h4>
-              <span className="font-mono text-[10px] text-text-muted">Paso 4 de 5</span>
-            </div>
-
-            {/* Stepper Track */}
-            <div className="relative pl-6 flex flex-col gap-4 before:content-[''] before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-surface-container-highest">
-              {/* Step 1 */}
-              <div className="relative flex flex-col gap-0.5 text-xs">
-                <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-secondary flex items-center justify-center text-on-secondary shadow-sm">
-                  <span className="material-symbols-outlined text-[11px]">check</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-text-primary">1. Solicitud y Cotización</span>
-                  <span className="font-mono text-[10px] text-text-muted">08:30 AM</span>
-                </div>
-                <p className="text-[11px] text-text-secondary">
-                  Generación algorítmica vía Edge Functions ($145 USD aprobados).
-                </p>
-              </div>
-
-              {/* Step 2 */}
-              <div className="relative flex flex-col gap-0.5 text-xs">
-                <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-secondary flex items-center justify-center text-on-secondary shadow-sm">
-                  <span className="material-symbols-outlined text-[11px]">check</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-text-primary">2. Despacho de Cuadrilla</span>
-                  <span className="font-mono text-[10px] text-text-muted">09:15 AM</span>
-                </div>
-                <p className="text-[11px] text-text-secondary">
-                  Asignado a Ing. Carlos Mendoza (Vehículo T-402, GPS Sync).
-                </p>
-              </div>
-
-              {/* Step 3 */}
-              <div className="relative flex flex-col gap-0.5 text-xs">
-                <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-secondary flex items-center justify-center text-on-secondary shadow-sm">
-                  <span className="material-symbols-outlined text-[11px]">check</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-text-primary">3. Check-in con Geocerca</span>
-                  <span className="font-mono text-[10px] text-text-muted">10:02 AM</span>
-                </div>
-                <p className="text-[11px] text-text-secondary">
-                  Validado dentro del polígono (&lt;25m del transformador central).
-                </p>
-              </div>
-
-              {/* Step 4 */}
-              <div className="relative flex flex-col gap-0.5 text-xs">
-                <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-primary flex items-center justify-center text-on-primary shadow-sm ring-2 ring-primary/30">
-                  <span className="material-symbols-outlined text-[11px] animate-spin">
-                    autorenew
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-primary">4. Captura & Diagnóstico In-Situ</span>
-                  <span className="font-mono text-[10px] text-primary">10:45 AM (En curso)</span>
-                </div>
-                <p className="text-[11px] text-text-secondary">
-                  14/18 puntos verificados. Análisis térmico y fotos validadas por Gemini.
-                </p>
-              </div>
-
-              {/* Step 5 */}
-              <div className="relative flex flex-col gap-0.5 text-xs opacity-60">
-                <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-surface-container flex items-center justify-center text-text-muted shadow-sm">
-                  <span className="material-symbols-outlined text-[11px]">lock_clock</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-text-muted">5. Cierre & Calidad CSAT</span>
-                  <span className="font-mono text-[10px] text-text-muted">Pendiente</span>
-                </div>
-                <p className="text-[11px] text-text-muted">
-                  Generación de acta final, firma digital y feedback.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Completion & CSAT AI Rating Component (Estado 3) */}
-          <div className="p-4 bg-surface-card rounded-xl border border-border-subtle shadow-md flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col">
-                <span className="text-xs font-semibold text-text-primary">
-                  Calificación & Feedback CSAT
-                </span>
-                <span className="text-[11px] text-text-secondary">
-                  Cierre formal de la visita técnica
-                </span>
-              </div>
-              <span className="px-2 py-0.5 rounded bg-ai-accent/15 text-ai-accent font-mono text-[10px] border border-ai-accent/30 font-semibold">
-                Audit IA
-              </span>
-            </div>
-
-            {/* Star Selector */}
-            <div className="p-3 rounded-lg bg-surface-container-low border border-border-subtle flex flex-col items-center justify-center gap-1.5">
-              <span className="text-[11px] text-text-muted">
-                ¿Cómo evalúa la atención técnica del servicio?
-              </span>
-              <div className="flex items-center gap-2 text-status-warning cursor-pointer">
-                {[1, 2, 3, 4, 5].map((idx) => (
+        <section className="lg:col-span-5 space-y-4">
+          {state === "cotizacion" && (
+            <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-2 text-xs">
+              <h3 className="font-semibold text-sm">Datos de la solicitud</h3>
+              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Nombre" value={draft.customerName ?? ""} onChange={(e) => patchDraft({ customerName: e.target.value })} />
+              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Identificación" value={draft.customerDocument ?? ""} onChange={(e) => patchDraft({ customerDocument: e.target.value })} />
+              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Correo" value={draft.email ?? ""} onChange={(e) => patchDraft({ email: e.target.value })} />
+              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Teléfono" value={draft.phone ?? ""} onChange={(e) => patchDraft({ phone: e.target.value })} />
+              <textarea className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Mensaje inicial" value={draft.openingMessage ?? ""} onChange={(e) => patchDraft({ openingMessage: e.target.value })} />
+              <div className="flex flex-wrap gap-2">
+                {SERVICE_CATALOG.map((s) => (
                   <button
-                    key={idx}
+                    key={s.id}
                     type="button"
-                    onClick={() => setStars(idx)}
-                    className="hover:scale-125 transition-transform focus:outline-none"
+                    onClick={() => toggleService(s.id)}
+                    className={`px-2 py-1 rounded-lg border ${draft.services.includes(s.id) ? "border-primary text-primary" : "border-border-subtle"}`}
                   >
-                    <span
-                      className="material-symbols-outlined text-[24px]"
-                      style={{
-                        fontVariationSettings: `'FILL' ${idx <= stars ? 1 : 0}`,
-                      }}
-                    >
-                      star
-                    </span>
+                    {s.label}
                   </button>
                 ))}
               </div>
-              <span className="font-mono text-xs text-secondary font-medium">
-                {stars}.0 / 5.0 — {stars === 5 ? "Excelente Desempeño" : "Servicio Conforme"}
-              </span>
-            </div>
-
-            {/* Feedback Criteria Tags */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-mono text-text-muted uppercase">
-                Puntos destacados:
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  "Puntualidad Geocerca",
-                  "Claridad Técnica",
-                  "Resolución Inconsistencia IA",
-                  "Equipos Calibrados",
-                ].map((tag) => {
-                  const active = selectedTags.includes(tag);
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => toggleTag(tag)}
-                      className={`px-2.5 py-1 rounded-lg text-xs transition-colors flex items-center gap-1 border ${
-                        active
-                          ? "bg-surface-container text-text-primary border-secondary/40"
-                          : "bg-surface-container-low text-text-muted border-border-subtle"
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[13px] text-secondary">
-                        {active ? "check_circle" : "add"}
-                      </span>
-                      <span>{tag}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* AI Summary note */}
-            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-border-subtle flex flex-col gap-1 text-[11px]">
-              <div className="flex items-center justify-between text-text-muted font-mono text-[10px]">
-                <span>VALIDACIÓN DE ENTREGA GEMINI</span>
-                <span className="text-status-online">Cierre Automatizado OK</span>
-              </div>
-              <p className="text-text-secondary leading-relaxed">
-                Las evidencias capturadas en sitio cumplen al 100% con la norma técnica. El informe
-                final firmado ha sido emitido.
-              </p>
-            </div>
-
-            {csatSubmitted ? (
-              <div className="p-2.5 rounded-lg bg-secondary/10 border border-secondary/30 text-secondary text-xs font-mono text-center">
-                ✓ Acta final emitida y sincronizada exitosamente.
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setCsatSubmitted(true)}
-                className="w-full py-2 bg-secondary text-on-secondary rounded-lg text-xs font-semibold hover:bg-secondary/90 transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[16px]">done_all</span>
-                <span>Emitir Cierre y Acta Final</span>
+              <input type="datetime-local" className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" value={draft.scheduledAt ? draft.scheduledAt.slice(0, 16) : ""} onChange={(e) => patchDraft({ scheduledAt: e.target.value ? new Date(e.target.value).toISOString() : undefined })} />
+              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Ubicación" value={draft.location ?? ""} onChange={(e) => patchDraft({ location: e.target.value })} />
+              <input className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-2 py-1.5" placeholder="Observaciones de acceso (opcional)" value={draft.accessNotes ?? ""} onChange={(e) => patchDraft({ accessNotes: e.target.value })} />
+              <button type="button" className="w-full py-2 bg-primary text-on-primary rounded-lg" onClick={() => void askSummary()}>
+                Ver resumen y pedir confirmación
               </button>
-            )}
-          </div>
+              {awaitingConfirm && (
+                <div className="flex gap-2">
+                  <button type="button" className="flex-1 py-2 bg-secondary text-on-secondary rounded-lg" onClick={() => void confirmYes()}>Sí, confirmar</button>
+                  <button type="button" className="flex-1 py-2 border border-border-subtle rounded-lg" onClick={() => void confirmNo()}>No</button>
+                </div>
+              )}
+              {draft.status === "confirmed" && !draftLockedByRoute && (
+                <div className="space-y-2 pt-2 border-t border-border-subtle">
+                  <p>Puedes editar y volver a confirmar. El código {draft.serviceNumber} se conserva.</p>
+                  <button type="button" className="w-full py-2 border rounded-lg" onClick={() => setCancelOpen(true)}>Cancelar solicitud</button>
+                  {cancelOpen && (
+                    <div className="space-y-2">
+                      {CANCELLATION_REASONS.map((r) => (
+                        <label key={r.id} className="flex items-center gap-2">
+                          <input type="radio" name="reason" value={r.id} checked={cancelReason === r.id} onChange={() => setCancelReason(r.id)} />
+                          {r.label}
+                        </label>
+                      ))}
+                      <button type="button" className="w-full py-2 bg-error-container rounded-lg" onClick={() => void doCancel()}>Confirmar cancelación</button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {draftLockedByRoute && <p>El supervisor ya está en ruta. Editar y cancelar no están disponibles.</p>}
+            </div>
+          )}
+
+          {state === "finalizacion" && (
+            <div className="p-4 bg-surface-card rounded-xl border border-border-subtle space-y-3 text-xs">
+              {closure ? (
+                <p>
+                  Cierre {draft.serviceNumber}. Actividades: {closure.activities}. {closure.photosNote}
+                </p>
+              ) : (
+                <p>Consulta el código en progreso para ver el aviso de cierre cuando haya check-out sincronizado.</p>
+              )}
+              <input
+                className="w-full rounded-lg bg-surface-container-lowest border px-2 py-1.5"
+                placeholder="Código a evaluar"
+                value={draft.serviceNumber ?? ""}
+                onChange={(e) => patchDraft({ serviceNumber: e.target.value.startsWith("#") ? e.target.value : `#${e.target.value.replace("#", "")}` })}
+              />
+              <div className="flex gap-1">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button key={n} type="button" onClick={() => setStars(n)}>
+                    <span className="material-symbols-outlined" style={{ fontVariationSettings: `'FILL' ${n <= stars ? 1 : 0}` }}>star</span>
+                  </button>
+                ))}
+              </div>
+              <textarea className="w-full rounded-lg border px-2 py-1.5" placeholder="Comentario (puede ir vacío)" value={comment} onChange={(e) => setComment(e.target.value)} />
+              <label className="block">
+                Foto opcional
+                <input type="file" accept="image/*" onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setImage(String(reader.result));
+                  reader.readAsDataURL(file);
+                }} />
+              </label>
+              {evalDone ? (
+                <p>Evaluación registrada.</p>
+              ) : (
+                <button type="button" disabled={busy} className="w-full py-2 bg-secondary text-on-secondary rounded-lg" onClick={() => void sendEval()}>
+                  Enviar evaluación
+                </button>
+              )}
+            </div>
+          )}
+
+          {state === "progreso" && progressText && (
+            <div className="p-4 bg-surface-card rounded-xl border text-xs">{progressText}</div>
+          )}
         </section>
       </div>
     </div>
   );
+}
+
+function nowStamp() {
+  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }

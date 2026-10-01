@@ -2,61 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { db, enqueueOutbox } from "@/lib/db";
+import { db } from "@/lib/db";
 import { persistVisit } from "@/lib/sync";
 import { useAuth } from "@/lib/auth-context";
+import { serviceLabels } from "@/lib/catalog";
 import type { LocalVisit } from "@/lib/types";
-
-function seedIfEmpty(supervisorId: string) {
-  return db.visits.count().then(async (count) => {
-    if (count > 0) return;
-    const now = new Date().toISOString();
-    const visits: LocalVisit[] = [
-      {
-        id: "vis-eldorado-42",
-        clientUuid: crypto.randomUUID(),
-        supervisorId,
-        siteName: "Subestación El Dorado #42",
-        contractedActivity: "Inspección Termográfica y Puesta a Tierra RETIE",
-        status: "en_curso",
-        checkInAt: new Date(Date.now() - 3600000).toISOString(),
-        checkInLat: 4.6982,
-        checkInLng: -74.1415,
-        syncStatus: "pending",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: crypto.randomUUID(),
-        clientUuid: crypto.randomUUID(),
-        supervisorId,
-        siteName: "Torre Celular Calle 127",
-        contractedActivity: "Verificación de Tableros Eléctricos y Baterías",
-        status: "pendiente",
-        syncStatus: "pending",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: crypto.randomUUID(),
-        clientUuid: crypto.randomUUID(),
-        supervisorId,
-        siteName: "Planta Industrial Puente Aranda",
-        contractedActivity: "Inspección de Cuadrilla y Protocolo de Alturas",
-        status: "completada",
-        checkInAt: new Date(Date.now() - 7200000).toISOString(),
-        checkOutAt: new Date(Date.now() - 3600000).toISOString(),
-        syncStatus: "synced",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
-    await db.visits.bulkAdd(visits);
-    for (const visit of visits) {
-      await enqueueOutbox("visit", { id: visit.id });
-    }
-  });
-}
 
 export function SupervisorHome() {
   const { user } = useAuth();
@@ -66,6 +16,10 @@ export function SupervisorHome() {
   const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
   const [photoCount, setPhotoCount] = useState(0);
   const [showNewModal, setShowNewModal] = useState(false);
+  const [confirmed, setConfirmed] = useState<
+    { serviceNumber: string; location?: string; services?: string[]; customerName?: string }[]
+  >([]);
+  const [serviceNumber, setServiceNumber] = useState("");
 
   async function refresh() {
     const rows = await db.visits.orderBy("updatedAt").reverse().toArray();
@@ -75,7 +29,21 @@ export function SupervisorHome() {
 
   useEffect(() => {
     if (!user) return;
-    void seedIfEmpty(user.id).then(refresh);
+    let cancelled = false;
+    queueMicrotask(() => {
+      void (async () => {
+        const rows = await db.visits.orderBy("updatedAt").reverse().toArray();
+        const res = await fetch("/api/confirmed-services");
+        const j = (await res.json()) as { services?: typeof confirmed };
+        if (cancelled) return;
+        setVisits(rows);
+        setPhotoCount(await db.evidence.count());
+        setConfirmed(j.services ?? []);
+      })();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   async function createVisit(e: React.FormEvent) {
@@ -87,7 +55,8 @@ export function SupervisorHome() {
       clientUuid: crypto.randomUUID(),
       supervisorId: user.id,
       siteName: siteName.trim(),
-      contractedActivity: activity.trim() || "Inspección general de campo",
+      contractedActivity: activity.trim(),
+      serviceNumber: serviceNumber || undefined,
       status: "pendiente",
       syncStatus: "pending",
       createdAt: now,
@@ -96,6 +65,7 @@ export function SupervisorHome() {
     await persistVisit(visit);
     setSiteName("");
     setActivity("");
+    setServiceNumber("");
     setShowNewModal(false);
     await refresh();
   }
@@ -199,12 +169,23 @@ export function SupervisorHome() {
       </section>
 
       {/* 3. Visits List Header & Add Button */}
+      {confirmed.length > 0 && (
+        <section className="rounded-xl border border-border-subtle p-3 text-xs space-y-1">
+          <h3 className="font-semibold">Solicitudes confirmadas</h3>
+          {confirmed.map((s) => (
+            <p key={s.serviceNumber} className="font-mono text-primary">
+              Servicio {s.serviceNumber}
+              {s.location ? ` · ${s.location}` : ""}
+            </p>
+          ))}
+        </section>
+      )}
       <div className="flex items-center justify-between pt-1">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-primary text-[20px]">
             format_list_bulleted
           </span>
-          <h2 className="text-sm font-semibold text-text-primary">Ruta de Visitas Asignadas</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Visitas de campo</h2>
         </div>
         <button
           type="button"
@@ -243,10 +224,23 @@ export function SupervisorHome() {
           />
           <input
             className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:border-primary focus:outline-none"
-            placeholder="Actividad contratada a supervisar"
+            placeholder="Actividad contratada"
             value={activity}
             onChange={(e) => setActivity(e.target.value)}
+            required
           />
+          <select
+            className="w-full rounded-lg bg-surface-container-lowest border border-border-subtle px-3 py-2 text-xs"
+            value={serviceNumber}
+            onChange={(e) => setServiceNumber(e.target.value)}
+          >
+            <option value="">Sin ligar a solicitud (opcional)</option>
+            {confirmed.map((s) => (
+              <option key={s.serviceNumber} value={s.serviceNumber}>
+                Servicio {s.serviceNumber} — {s.location || s.customerName || serviceLabels(s.services ?? [])}
+              </option>
+            ))}
+          </select>
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
@@ -286,6 +280,9 @@ export function SupervisorHome() {
                 <p className="text-xs text-text-secondary truncate">
                   {visit.contractedActivity}
                 </p>
+                {visit.serviceNumber && (
+                  <p className="text-xs font-mono text-primary">Servicio {visit.serviceNumber}</p>
+                )}
               </div>
               <StatusBadge status={visit.status} />
             </div>
