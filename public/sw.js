@@ -1,4 +1,4 @@
-const CACHE = "camposync-v1";
+const CACHE = "fieldops-landing-v2";
 const APP_SHELL = ["/", "/login", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
