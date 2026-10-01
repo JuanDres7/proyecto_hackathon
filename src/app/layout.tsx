@@ -14,24 +14,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CampoSync — Supervisión inteligente en campo",
+  title: "FieldOps AI — Supervisión Inteligente de Servicios en Campo",
   description:
-    "PWA offline-first para supervisores, panel de coordinador y chatbot de cliente con Gemini.",
+    "PWA offline-first para supervisores, panel de control de operaciones y chatbot con Gemini Vision.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "CampoSync" },
+  appleWebApp: { capable: true, title: "FieldOps AI" },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b1f3a",
+  themeColor: "#030712",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="es"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col bg-surface text-on-surface">
         <Providers>{children}</Providers>
       </body>
     </html>
