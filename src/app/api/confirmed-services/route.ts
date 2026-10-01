@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/api-auth";
 import { listConfirmedServices } from "@/lib/orders";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const gate = await requireRole(req, ["supervisor", "coordinador"]);
+  if (gate.error) return gate.error;
   const rows = await listConfirmedServices();
   return NextResponse.json({
     services: rows.map((r) => ({

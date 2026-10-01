@@ -4,9 +4,16 @@ export type VisitStatus = "pendiente" | "en_curso" | "completada" | "novedad";
 
 export type ChatState = "cotizacion" | "progreso" | "finalizacion";
 
-export type SyncStatus = "pending" | "syncing" | "synced" | "error";
+export type SyncStatus = "pending" | "syncing" | "synced" | "error" | "dead";
 
 export type NovedadPriority = "alta" | "media" | "baja";
+
+export type ChecklistItem = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  status: "pending" | "progress" | "completed" | "blocked";
+};
 
 export type SessionUser = {
   id: string;
@@ -30,6 +37,14 @@ export type LocalVisit = {
   checkInLng?: number;
   checkOutLat?: number;
   checkOutLng?: number;
+  checkInAccuracyM?: number;
+  gpsMocked?: boolean;
+  costCenterId?: string;
+  siteLat?: number;
+  siteLng?: number;
+  geofenceRadiusM?: number;
+  identityVerified?: boolean;
+  checklist?: ChecklistItem[];
   notes?: string;
   novedad?: string;
   novedadPriority?: NovedadPriority;
@@ -45,6 +60,7 @@ export type LocalEvidence = {
   mimeType: string;
   caption?: string;
   storagePath?: string;
+  contentHash?: string;
   syncStatus: SyncStatus;
   createdAt: string;
 };
@@ -55,6 +71,8 @@ export type OutboxItem = {
   payload: Record<string, unknown>;
   createdAt: string;
   attempts: number;
+  nextAttemptAt?: string;
+  lastError?: string;
 };
 
 export type ChatMessage = {

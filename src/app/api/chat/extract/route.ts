@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { generateGeminiJson } from "@/lib/ai/gemini";
 import { heuristicSlots, sanitizeSlots } from "@/lib/ai/slots";
+import { requireRole } from "@/lib/api-auth";
 
 export async function POST(req: Request) {
+  const gate = await requireRole(req, ["cliente", "coordinador"]);
+  if (gate.error) return gate.error;
+
   const body = (await req.json().catch(() => null)) as { text?: string } | null;
   const text = typeof body?.text === "string" ? body.text : "";
   const fallback = heuristicSlots(text);

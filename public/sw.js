@@ -1,5 +1,11 @@
-const CACHE = "limpiapp-v3";
-const APP_SHELL = ["/", "/manifest.webmanifest"];
+const CACHE = "limpiapp-v4";
+const APP_SHELL = [
+  "/",
+  "/supervisor",
+  "/coordinador",
+  "/cliente",
+  "/manifest.webmanifest",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

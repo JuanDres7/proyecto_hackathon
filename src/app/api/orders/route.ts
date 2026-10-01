@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/api-auth";
+import { ordersBodySchema } from "@/lib/schemas";
 import {
   cancelOrder,
   confirmDraft,
@@ -6,24 +8,48 @@ import {
   saveChatTurn,
   saveDraft,
   sanitizeServices,
+  simulatePayment,
 } from "@/lib/orders";
 import type { QuoteDraft } from "@/lib/types";
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as {
-    action: "save" | "confirm" | "cancel" | "reject";
-    draft: QuoteDraft;
-    reason?: string;
-  };
+  const gate = await requireRole(req, ["cliente", "coordinador", "supervisor"]);
+  if (gate.error) return gate.error;
+
+  const parsed = ordersBodySchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
+  }
+  const body = parsed.data;
 
   const draft: QuoteDraft = {
     ...body.draft,
     services: sanitizeServices(body.draft.services),
   };
 
+  if (body.action === "pay") {
+    if (!draft.serviceNumber) {
+      return NextResponse.json({ ok: false, error: "sin_codigo" }, { status: 400 });
+    }
+    const result = await simulatePayment(draft.serviceNumber);
+    return NextResponse.json(result);
+  }
+
   if (body.action === "save" || body.action === "reject") {
-    const next = { ...draft, status: body.action === "reject" ? "draft" as const : (draft.status === "confirmed" ? "pending_confirmation" as const : draft.status) };
-    await saveDraft(next);
+    const next = {
+      ...draft,
+      status:
+        body.action === "reject"
+          ? ("draft" as const)
+          : draft.status === "confirmed"
+            ? ("pending_confirmation" as const)
+            : draft.status,
+    };
+    try {
+      await saveDraft(next);
+    } catch (e) {
+      return NextResponse.json({ error: String(e) }, { status: 500 });
+    }
     await saveChatTurn({
       draftId: draft.draftId,
       serviceNumber: draft.serviceNumber,
