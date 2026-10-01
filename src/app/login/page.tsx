@@ -3,7 +3,13 @@ import LoginPage from "./login-client";
 
 export default function Page() {
   return (
-    <Suspense fallback={<div className="min-h-full bg-[#0b1f3a]" />}>
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-surface text-text-secondary text-sm">
+          Cargando acceso…
+        </div>
+      }
+    >
       <LoginPage />
     </Suspense>
   );
