@@ -180,7 +180,7 @@ export async function puroTurn(input: {
     return {
       ...base,
       extracted: phase === "cotizacion" && !editLocked ? heuristicSlots(message) : {},
-      reply: null,
+      reply: model.error,
     };
   }
 

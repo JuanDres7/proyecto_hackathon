@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureDemoShowcase } from "@/lib/demo-data";
+import { keyFromEnvText } from "./gemini";
 import { puroTurn } from "./puro";
 
 afterEach(() => {
@@ -8,6 +9,11 @@ afterEach(() => {
 });
 
 describe("Puro llama a Gemini", () => {
+  it("lee GEMINI_API_KEY desde el texto de .env", () => {
+    expect(keyFromEnvText('GEMINI_API_KEY="abc123"\n')).toBe("abc123");
+    expect(keyFromEnvText("GOOGLE_API_KEY=xyz\n")).toBe("xyz");
+  });
+
   it("envía el mensaje y los servicios del cliente al modelo", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     ensureDemoShowcase();
@@ -44,5 +50,19 @@ describe("Puro llama a Gemini", () => {
     expect(sent).toContain("#3089");
     expect(result.available).toBe(true);
     expect(result.reply).toContain("#3089");
+  });
+
+  it("muestra el error de Gemini en lugar de ocultarlo", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: { message: "API key not valid" } }), { status: 400 })),
+    );
+    const result = await puroTurn({
+      phase: "cotizacion",
+      message: "hola",
+      email: "cliente@limpiapp.co",
+    });
+    expect(result.reply).toContain("API key not valid");
   });
 });
