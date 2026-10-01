@@ -1,4 +1,5 @@
 import { db, enqueueOutbox } from "./db";
+import { memory } from "./memory-store";
 import { createClient, isSupabaseConfigured } from "./supabase/client";
 import type { LocalVisit } from "./types";
 
@@ -8,6 +9,7 @@ function visitToRow(visit: LocalVisit) {
     supervisor_id: visit.supervisorId.startsWith("demo-")
       ? null
       : visit.supervisorId,
+    service_number: visit.serviceNumber ?? null,
     site_name: visit.siteName,
     contracted_activity: visit.contractedActivity,
     status: visit.status,
@@ -19,13 +21,46 @@ function visitToRow(visit: LocalVisit) {
     check_out_lng: visit.checkOutLng ?? null,
     notes: visit.notes ?? null,
     novedad: visit.novedad ?? null,
+    novedad_priority: visit.novedadPriority ?? null,
     updated_at: visit.updatedAt,
   };
+}
+
+function ingestMemory(visit: LocalVisit) {
+  memory.visits.upsert({
+    id: visit.id,
+    client_uuid: visit.clientUuid,
+    supervisor_id: visit.supervisorId,
+    service_number: visit.serviceNumber ?? null,
+    site_name: visit.siteName,
+    contracted_activity: visit.contractedActivity,
+    status: visit.status,
+    check_in_at: visit.checkInAt ?? null,
+    check_out_at: visit.checkOutAt ?? null,
+    novedad: visit.novedad ?? null,
+    notes: visit.notes ?? null,
+    novedad_priority: visit.novedadPriority ?? null,
+    created_at: visit.createdAt,
+    updated_at: visit.updatedAt,
+  });
+  if (visit.status === "novedad") {
+    const exists = memory.alerts.all().some((a) => a.visit_id === visit.id);
+    if (!exists) {
+      memory.alerts.add({
+        id: crypto.randomUUID(),
+        visit_id: visit.id,
+        message: `Novedad en ${visit.siteName}: ${visit.novedad ?? "sin detalle"}`,
+        severity: "alta",
+        created_at: new Date().toISOString(),
+      });
+    }
+  }
 }
 
 export async function persistVisit(visit: LocalVisit) {
   await db.visits.put(visit);
   await enqueueOutbox("visit", { id: visit.id });
+  ingestMemory(visit);
 }
 
 export async function syncPending(): Promise<{ synced: number; failed: number }> {
@@ -42,6 +77,11 @@ export async function syncPending(): Promise<{ synced: number; failed: number }>
         const visit = await db.visits.get(String(item.payload.id));
         if (visit) {
           await db.visits.update(visit.id, { syncStatus: "synced" });
+          await fetch("/api/field-visit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(visit),
+          }).catch(() => undefined);
         }
       }
       if (item.entity === "evidence") {

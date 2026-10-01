@@ -13,6 +13,11 @@ class CampoDB extends Dexie {
       evidence: "id, visitId, syncStatus, createdAt",
       outbox: "id, entity, createdAt",
     });
+    this.version(2).stores({
+      visits: "id, clientUuid, supervisorId, serviceNumber, status, syncStatus, updatedAt",
+      evidence: "id, visitId, syncStatus, createdAt",
+      outbox: "id, entity, createdAt",
+    });
   }
 }
 

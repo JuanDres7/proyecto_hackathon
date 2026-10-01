@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { db, enqueueOutbox } from "@/lib/db";
 import { getCurrentPosition } from "@/lib/geo";
 import { persistVisit, syncPending } from "@/lib/sync";
-import type { LocalEvidence, LocalVisit } from "@/lib/types";
+import type { LocalEvidence, LocalVisit, NovedadPriority } from "@/lib/types";
+import { useAuth } from "@/lib/auth-context";
 
 type ChecklistTask = {
   id: string;
@@ -45,10 +46,12 @@ const NOVELTY_TAGS = [
 
 export function VisitDetail({ visitId }: { visitId: string }) {
   const router = useRouter();
+  const { user } = useAuth();
   const [visit, setVisit] = useState<LocalVisit | null>(null);
   const [photos, setPhotos] = useState<LocalEvidence[]>([]);
   const [novedad, setNovedad] = useState("");
   const [notes, setNotes] = useState("");
+  const [priority, setPriority] = useState<NovedadPriority>("alta");
   const [error, setError] = useState("");
   const [checklist, setChecklist] = useState<ChecklistTask[]>(INITIAL_CHECKLIST);
   const [feedbackMsg, setFeedbackMsg] = useState("");
@@ -59,6 +62,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     setVisit(row);
     setNovedad(row?.novedad ?? "");
     setNotes(row?.notes ?? "");
+    setPriority(row?.novedadPriority ?? "alta");
     setPhotos(await db.evidence.where("visitId").equals(visitId).toArray());
   }, [visitId]);
 
@@ -70,6 +74,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
       setVisit(row);
       setNovedad(row?.novedad ?? "");
       setNotes(row?.notes ?? "");
+      setPriority(row?.novedadPriority ?? "alta");
       const ph = await db.evidence.where("visitId").equals(visitId).toArray();
       if (cancelled) return;
       setPhotos(ph);
@@ -99,14 +104,14 @@ export function VisitDetail({ visitId }: { visitId: string }) {
       if (kind === "in") {
         await save({
           status: "en_curso",
-          checkInAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          checkInAt: new Date().toISOString(),
           checkInLat: geo.lat,
           checkInLng: geo.lng,
         });
       } else {
         await save({
           status: visit?.novedad ? "novedad" : "completada",
-          checkOutAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          checkOutAt: new Date().toISOString(),
           checkOutLat: geo.lat,
           checkOutLng: geo.lng,
         });
@@ -154,6 +159,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
     await save({
       novedad: novedad.trim(),
       notes: notes.trim(),
+      novedadPriority: priority,
       status: "novedad",
     });
     setFeedbackMsg("Guardado localmente en Dexie.js");
@@ -204,6 +210,9 @@ export function VisitDetail({ visitId }: { visitId: string }) {
               <h2 className="text-sm font-semibold text-text-primary truncate">
                 {visit.siteName}
               </h2>
+              {visit.serviceNumber && (
+                <p className="font-mono text-xs text-primary">Servicio {visit.serviceNumber}</p>
+              )}
             </div>
           </div>
           <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-secondary/10 text-secondary border border-secondary/30 font-semibold">
@@ -246,7 +255,7 @@ export function VisitDetail({ visitId }: { visitId: string }) {
                 <span className="font-semibold text-secondary">
                   {visit.checkInAt ? "Check-in realizado" : "Check-in pendiente"}
                 </span>{" "}
-                {visit.checkInAt ? `a las ${visit.checkInAt}` : ""}
+                  {visit.checkInAt ? `a las ${new Date(visit.checkInAt).toLocaleString("es-CO")}` : ""}
               </p>
               <span className="font-mono text-[10px] text-text-muted mt-0.5">
                 {visit.checkInLat != null
@@ -280,13 +289,25 @@ export function VisitDetail({ visitId }: { visitId: string }) {
 
             <button
               type="button"
-              onClick={() => window.alert("Jornada pausada temporalmente. Registro guardado localmente.")}
+              onClick={async () => {
+                if (!visit.serviceNumber || !user) return;
+                await fetch("/api/en-route", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    serviceNumber: visit.serviceNumber,
+                    supervisorId: user.id,
+                  }),
+                });
+                setFeedbackMsg("En ruta registrado para la solicitud");
+                setTimeout(() => setFeedbackMsg(""), 3000);
+              }}
               className="w-full min-h-[44px] bg-surface-container-high hover:bg-surface-bright active:scale-[0.99] transition-all rounded-xl text-text-primary text-xs font-medium flex items-center justify-center gap-2 border border-border-subtle cursor-pointer"
             >
               <span className="material-symbols-outlined text-tertiary text-[18px]">
-                restaurant
+                directions_walk
               </span>
-              <span>Pausar Jornada (Espera)</span>
+              <span>Marcar en ruta</span>
             </button>
           </div>
 
@@ -440,23 +461,37 @@ export function VisitDetail({ visitId }: { visitId: string }) {
             ))}
           </div>
 
-          <div className="relative mt-2">
-            <input
-              type="text"
-              value={novedad}
-              onChange={(e) => setNovedad(e.target.value)}
-              placeholder="Escriba detalle o seleccione etiqueta..."
-              className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs text-text-primary placeholder:text-text-muted outline-none border border-border-subtle focus:border-primary transition-colors"
-            />
-            <button
-              type="button"
-              onClick={handleSaveNovelty}
-              className="absolute right-1 top-1 h-7 px-2.5 rounded bg-surface-container-high hover:bg-primary hover:text-on-primary text-text-primary text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[14px]">save</span>
-              <span>Guardar</span>
-            </button>
-          </div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Notas de la visita"
+            className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs"
+          />
+          <label className="text-[11px] text-text-secondary">Prioridad de la novedad (la define el supervisor)</label>
+          <select
+            value={priority}
+            onChange={(e) => setPriority(e.target.value as NovedadPriority)}
+            className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs"
+          >
+            <option value="alta">Alta</option>
+            <option value="media">Media</option>
+            <option value="baja">Baja</option>
+          </select>
+          <input
+            type="text"
+            value={novedad}
+            onChange={(e) => setNovedad(e.target.value)}
+            placeholder="Escriba detalle o seleccione etiqueta..."
+            className="w-full bg-surface-container-lowest px-3 py-2 rounded-lg text-xs text-text-primary placeholder:text-text-muted outline-none border border-border-subtle focus:border-primary transition-colors"
+          />
+          <button
+            type="button"
+            onClick={handleSaveNovelty}
+            className="h-8 px-3 rounded bg-surface-container-high hover:bg-primary hover:text-on-primary text-text-primary text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[14px]">save</span>
+            <span>Guardar</span>
+          </button>
 
           {feedbackMsg && (
             <p className="text-[11px] text-secondary flex items-center gap-1 font-mono pt-1">

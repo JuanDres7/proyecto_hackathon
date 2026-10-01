@@ -64,6 +64,7 @@ export function AppShell({
 
             {/* Desktop Navigation */}
             <nav className="hidden lg:flex items-center gap-1">
+              {(!user || user.role === "coordinador") && (
               <Link
                 href="/coordinador"
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -72,8 +73,10 @@ export function AppShell({
                     : "text-text-secondary hover:text-text-primary hover:bg-surface-container"
                 }`}
               >
-                Dashboard Coordinador
+                Panel coordinador
               </Link>
+              )}
+              {(!user || user.role === "supervisor") && (
               <Link
                 href="/supervisor"
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -82,8 +85,10 @@ export function AppShell({
                     : "text-text-secondary hover:text-text-primary hover:bg-surface-container"
                 }`}
               >
-                Supervisor PWA
+                Supervisor
               </Link>
+              )}
+              {(!user || user.role === "cliente") && (
               <Link
                 href="/cliente"
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -92,8 +97,9 @@ export function AppShell({
                     : "text-text-secondary hover:text-text-primary hover:bg-surface-container"
                 }`}
               >
-                Portal Cliente IA
+                Chat cliente
               </Link>
+              )}
             </nav>
           </div>
 

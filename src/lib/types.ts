@@ -2,9 +2,11 @@ export type UserRole = "supervisor" | "coordinador" | "cliente";
 
 export type VisitStatus = "pendiente" | "en_curso" | "completada" | "novedad";
 
-export type ChatState = "cotizacion" | "seguimiento" | "cierre";
+export type ChatState = "cotizacion" | "progreso" | "finalizacion";
 
 export type SyncStatus = "pending" | "syncing" | "synced" | "error";
+
+export type NovedadPriority = "alta" | "media" | "baja";
 
 export type SessionUser = {
   id: string;
@@ -18,6 +20,7 @@ export type LocalVisit = {
   id: string;
   clientUuid: string;
   supervisorId: string;
+  serviceNumber?: string;
   siteName: string;
   contractedActivity: string;
   status: VisitStatus;
@@ -29,6 +32,7 @@ export type LocalVisit = {
   checkOutLng?: number;
   notes?: string;
   novedad?: string;
+  novedadPriority?: NovedadPriority;
   syncStatus: SyncStatus;
   createdAt: string;
   updatedAt: string;
@@ -59,4 +63,19 @@ export type ChatMessage = {
   content: string;
   imageDataUrl?: string;
   createdAt: string;
+};
+
+export type QuoteDraft = {
+  draftId: string;
+  customerName?: string;
+  customerDocument?: string;
+  email?: string;
+  phone?: string;
+  openingMessage?: string;
+  services: string[];
+  scheduledAt?: string;
+  location?: string;
+  accessNotes?: string;
+  serviceNumber?: string;
+  status: "draft" | "pending_confirmation" | "confirmed" | "cancelled";
 };
