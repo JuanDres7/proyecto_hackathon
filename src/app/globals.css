@@ -10,10 +10,11 @@
 
 :root {
   --background: #0f172a;
-  --foreground: #f1f5f9;
+  --foreground: #ffffff;
 }
 
 @theme {
+  --color-white: #ffffff;
   --color-surface: #0f172a;
   --color-surface-dim: #0b1220;
   --color-surface-bright: #1e293b;
@@ -22,9 +23,9 @@
   --color-surface-container: #1e293b;
   --color-surface-container-high: #334155;
   --color-surface-container-highest: #475569;
-  --color-on-surface: #f1f5f9;
-  --color-on-surface-variant: #cbd5e1;
-  --color-outline: #94a3b8;
+  --color-on-surface: #ffffff;
+  --color-on-surface-variant: #e2e8f0;
+  --color-outline: #cbd5e1;
   --color-outline-variant: #475569;
   --color-primary: #3b82f6;
   --color-primary-container: #2563eb;
@@ -53,9 +54,9 @@
   --color-border-subtle: #1e293b;
   --color-border-muted: #334155;
   --color-border-active: #3b82f6;
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #64748b;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e2e8f0;
+  --color-text-muted: #cbd5e1;
   --color-error: #fca5a5;
   --color-error-container: #7f1d1d;
   --color-on-error-container: #fee2e2;

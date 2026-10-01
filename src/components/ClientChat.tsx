@@ -172,7 +172,7 @@ export function ClientChat() {
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-semibold text-text-primary tracking-tight">
-                Portal Cliente FieldOps
+                Portal Cliente LimpiAPP
               </span>
               <span className="px-2 py-0.5 rounded-full bg-surface-container font-mono text-xs text-primary font-medium border border-border-subtle">
                 {serviceNumber}
@@ -230,7 +230,7 @@ export function ClientChat() {
               <div className="flex flex-col min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-semibold text-text-primary truncate">
-                    Asistente Virtual FieldOps
+                    Asistente Virtual LimpiAPP
                   </span>
                   <span className="px-1.5 py-0.2 rounded font-mono text-[10px] uppercase bg-surface-container text-ai-accent border border-ai-accent/30">
                     Gemini 1.5 Pro

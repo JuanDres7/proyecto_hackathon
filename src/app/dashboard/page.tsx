@@ -80,12 +80,12 @@ export default function DashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login?next=/dashboard");
+    if (!loading && !user) router.replace("/?login=1");
   }, [loading, user, router]);
 
   if (loading || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-surface text-text-secondary text-sm">
+      <div className="min-h-screen flex items-center justify-center bg-surface text-white/70 text-sm">
         Preparando tu panel…
       </div>
     );
@@ -93,9 +93,6 @@ export default function DashboardPage() {
 
   const primary = MODULES[user.role];
   const PrimaryIcon = primary.icon;
-  const others = (Object.keys(MODULES) as UserRole[]).filter(
-    (r) => r !== user.role,
-  );
 
   return (
     <div className="min-h-screen bg-surface text-on-surface landing-mesh antialiased">
@@ -181,40 +178,6 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Other modules (visible for awareness; RoleGate still enforces access) */}
-        <div className="mt-10">
-          <h3 className="font-display text-lg font-semibold text-text-primary">
-            Otros menús de la plataforma
-          </h3>
-          <p className="mt-1 text-sm text-text-muted">
-            Disponibles según permisos. En demo puedes cambiar de rol desde el login.
-          </p>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {others.map((role) => {
-              const mod = MODULES[role];
-              const Icon = mod.icon;
-              return (
-                <Link
-                  key={role}
-                  href="/login"
-                  className="rounded-xl border border-border-subtle bg-surface-container-low/70 p-5 hover:border-border-active transition-all group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center">
-                      <Icon size={18} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-text-primary group-hover:text-primary transition-colors">
-                        {mod.title}
-                      </p>
-                      <p className="text-xs text-text-muted">{mod.subtitle}</p>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
       </main>
     </div>
   );
