@@ -53,36 +53,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabaseReady = isSupabaseConfigured();
 
   useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      setUser(JSON.parse(raw) as SessionUser);
-      setLoading(false);
-      return;
-    }
+    let active = true;
 
-    const supabase = createClient();
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
+    async function initAuth() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        if (active) {
+          setUser(JSON.parse(raw) as SessionUser);
+          setLoading(false);
+        }
+        return;
+      }
 
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (data.user) {
+      const supabase = createClient();
+      if (!supabase) {
+        if (active) setLoading(false);
+        return;
+      }
+
+      const { data } = await supabase.auth.getUser();
+      if (data.user && active) {
         const { data: profile } = await supabase
           .from("profiles")
           .select("full_name, role")
           .eq("id", data.user.id)
           .maybeSingle();
-        setUser({
-          id: data.user.id,
-          email: data.user.email ?? "",
-          fullName: profile?.full_name ?? "Usuario",
-          role: (profile?.role as UserRole) ?? "supervisor",
-          demo: false,
-        });
+
+        if (active) {
+          setUser({
+            id: data.user.id,
+            email: data.user.email ?? "",
+            fullName: profile?.full_name ?? "Usuario",
+            role: (profile?.role as UserRole) ?? "supervisor",
+            demo: false,
+          });
+        }
       }
-      setLoading(false);
-    });
+      if (active) setLoading(false);
+    }
+
+    void initAuth();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const enterDemo = useCallback((role: UserRole) => {
