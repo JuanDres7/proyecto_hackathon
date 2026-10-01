@@ -5,7 +5,7 @@ import { SupervisorHome } from "@/components/SupervisorHome";
 export default function SupervisorPage() {
   return (
     <RoleGate role="supervisor">
-      <AppShell title="Módulo del supervisor">
+      <AppShell title="Visitas">
         <SupervisorHome />
       </AppShell>
     </RoleGate>

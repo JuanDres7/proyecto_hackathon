@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { db } from "@/lib/db";
+import { mapsUrl } from "@/lib/geo";
 
 type VisitRow = {
   id: string;
@@ -10,8 +12,19 @@ type VisitRow = {
   status: string;
   check_in_at?: string | null;
   check_out_at?: string | null;
+  check_in_lat?: number | string | null;
+  check_in_lng?: number | string | null;
   novedad?: string | null;
   service_number?: string | null;
+};
+
+type LocalGeo = {
+  id: string;
+  clientUuid: string;
+  siteName: string;
+  serviceNumber?: string;
+  lat: number;
+  lng: number;
 };
 
 type AlertRow = {
@@ -43,8 +56,36 @@ function fmt(iso?: string | null) {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString("es-CO");
 }
 
+function coord(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+async function readLocalGeo(): Promise<LocalGeo[]> {
+  try {
+    const rows = await db.visits.toArray();
+    return rows.flatMap((visit) => {
+      if (visit.checkInLat == null || visit.checkInLng == null) return [];
+      return [
+        {
+          id: visit.id,
+          clientUuid: visit.clientUuid,
+          siteName: visit.siteName,
+          serviceNumber: visit.serviceNumber,
+          lat: visit.checkInLat,
+          lng: visit.checkInLng,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function CoordinatorDashboard() {
   const [visits, setVisits] = useState<VisitRow[]>([]);
+  const [localGeo, setLocalGeo] = useState<LocalGeo[]>([]);
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [pqr, setPqr] = useState<PqrItem[]>([]);
   const [tab, setTab] = useState<"visitas" | "alertas" | "pqr">("visitas");
@@ -58,6 +99,7 @@ export function CoordinatorDashboard() {
       fetch("/api/coordinator?kind=pqr").then((r) => r.json()),
     ]);
     setVisits(v.visits ?? []);
+    setLocalGeo(await readLocalGeo());
     setAlerts(a.alerts ?? []);
     setPqr(p.items ?? []);
   }
@@ -73,6 +115,7 @@ export function CoordinatorDashboard() {
         ]);
         if (cancelled) return;
         setVisits(v.visits ?? []);
+        setLocalGeo(await readLocalGeo());
         setAlerts(a.alerts ?? []);
         setPqr(p.items ?? []);
       })();
@@ -81,6 +124,45 @@ export function CoordinatorDashboard() {
       cancelled = true;
     };
   }, []);
+
+  const locations = useMemo(() => {
+    const items: { key: string; title: string; code?: string | null; lat: number; lng: number }[] = [];
+    const seen = new Set<string>();
+
+    function push(key: string, title: string, lat: number, lng: number, code?: string | null) {
+      if (seen.has(key)) return;
+      seen.add(key);
+      items.push({ key, title, code, lat, lng });
+    }
+
+    for (const visit of visits) {
+      const lat = coord(visit.check_in_lat);
+      const lng = coord(visit.check_in_lng);
+      const local = localGeo.find(
+        (row) =>
+          row.clientUuid === visit.client_uuid ||
+          row.id === visit.id ||
+          (visit.service_number != null && row.serviceNumber === visit.service_number),
+      );
+      const pointLat = lat ?? local?.lat ?? null;
+      const pointLng = lng ?? local?.lng ?? null;
+      if (pointLat == null || pointLng == null) continue;
+      push(visit.client_uuid || visit.id, visit.site_name, pointLat, pointLng, visit.service_number);
+      if (visit.client_uuid) seen.add(visit.client_uuid);
+      seen.add(visit.id);
+      if (local) {
+        seen.add(local.clientUuid);
+        seen.add(local.id);
+      }
+    }
+
+    for (const row of localGeo) {
+      if (seen.has(row.clientUuid) || seen.has(row.id)) continue;
+      push(row.clientUuid, row.siteName, row.lat, row.lng, row.serviceNumber);
+    }
+
+    return items;
+  }, [localGeo, visits]);
 
   const filteredVisits = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -208,6 +290,32 @@ export function CoordinatorDashboard() {
           </table>
           {filteredVisits.length === 0 && (
             <p className="text-xs text-text-muted pt-4">No hay visitas sincronizadas todavía.</p>
+          )}
+          {locations.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h3 className="text-xs font-semibold text-text-primary">Ubicación de llegada</h3>
+              <ul className="space-y-2">
+                {locations.map((point) => (
+                  <li key={point.key} className="text-xs text-text-secondary">
+                    <span className="text-text-primary">{point.title}</span>
+                    {point.code ? <span className="font-mono text-primary"> · {point.code}</span> : null}
+                    <span className="font-mono">
+                      {" "}
+                      · {point.lat.toFixed(5)}, {point.lng.toFixed(5)}
+                    </span>
+                    {" · "}
+                    <a
+                      href={mapsUrl(point.lat, point.lng)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary underline"
+                    >
+                      Ver mapa
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

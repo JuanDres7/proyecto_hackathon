@@ -1,5 +1,9 @@
 export type GeoPoint = { lat: number; lng: number };
 
+export function mapsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}
+
 export function getCurrentPosition(): Promise<GeoPoint> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
