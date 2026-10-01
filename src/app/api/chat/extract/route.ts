@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { SERVICE_CATALOG } from "@/lib/catalog";
+import { requireRole } from "@/lib/api-auth";
 
 type Extracted = {
   customerName?: string;
@@ -28,6 +29,8 @@ function heuristic(text: string): Extracted {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireRole(req, ["cliente", "coordinador"]);
+  if (gate.error) return gate.error;
   const body = (await req.json()) as { text: string };
   const base = heuristic(body.text);
   const key = process.env.GEMINI_API_KEY;
@@ -36,10 +39,10 @@ export async function POST(req: Request) {
   }
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
         contents: [
           {

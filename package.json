@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "nlp": "docker compose up --build nlp"
   },
   "dependencies": {
@@ -17,7 +18,8 @@
     "lucide-react": "^1.49.0",
     "next": "16.3.8",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -28,6 +30,7 @@
     "eslint-config-next": "16.3.8",
     "supabase": "^2.119.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }
