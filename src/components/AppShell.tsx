@@ -30,12 +30,29 @@ const ROLE_NAV: Record<
   cliente: [
     {
       href: "/cliente",
-      label: "Asistente IA",
+      label: "Asistente",
       icon: "smart_toy",
       accent: "text-ai-accent",
     },
+    {
+      href: "/cliente/servicios",
+      label: "Mis servicios",
+      icon: "list_alt",
+      accent: "text-primary",
+    },
   ],
 };
+
+function navIsActive(pathname: string, href: string, items: { href: string }[]) {
+  if (pathname === href) return true;
+  if (!pathname.startsWith(`${href}/`)) return false;
+  return !items.some(
+    (item) =>
+      item.href !== href &&
+      item.href.startsWith(`${href}/`) &&
+      (pathname === item.href || pathname.startsWith(`${item.href}/`)),
+  );
+}
 
 export function AppShell({
   title,
@@ -123,7 +140,7 @@ export function AppShell({
 
               <nav className="flex flex-col gap-1">
                 {navItems.map((item) => {
-                  const active = pathname.startsWith(item.href);
+                  const active = navIsActive(pathname, item.href, navItems);
                   return (
                     <Link
                       key={item.href}
@@ -180,7 +197,7 @@ export function AppShell({
       {showMobileNav && (
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface-container-lowest/95 backdrop-blur-md border-t border-border-subtle flex items-stretch justify-around px-2 pt-1.5 pb-safe">
           {navItems.map((item) => {
-            const active = pathname.startsWith(item.href);
+            const active = navIsActive(pathname, item.href, navItems);
             return (
               <Link
                 key={item.href}

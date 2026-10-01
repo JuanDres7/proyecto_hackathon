@@ -1,12 +1,50 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
+import { ensureDemoShowcase } from "@/lib/demo-data";
+import { SEED_USERS } from "@/lib/seed-users";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { buildSimplePdf } from "@/lib/pdf";
+import {
+  buildReportRows,
+  inReportRange,
+  parseReportGroup,
+  reportToCsv,
+  reportToPdf,
+  visitsFromMemory,
+  type ReportVisit,
+} from "@/lib/reports";
 
-function csvEscape(value: unknown) {
-  const s = value == null ? "" : String(value);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+async function loadVisits(): Promise<{ visits: ReportVisit[]; names: Record<string, string> }> {
+  ensureDemoShowcase();
+  const names: Record<string, string> = {};
+  for (const user of SEED_USERS) names[user.id] = user.fullName;
+  const admin = createAdminClient();
+  if (!admin) return { visits: visitsFromMemory(), names };
+
+  const [{ data, error }, { data: profiles }, { data: orders }] = await Promise.all([
+    admin.from("visits").select("supervisor_id, status, site_name, service_number, created_at"),
+    admin.from("profiles").select("id, full_name"),
+    admin.from("service_orders").select("service_number, customer_name"),
+  ]);
+  if (error || !data?.length) return { visits: visitsFromMemory(), names };
+
+  for (const profile of profiles ?? []) {
+    if (profile.id && profile.full_name) names[profile.id] = profile.full_name;
+  }
+  const centers = new Map<string, string>();
+  for (const order of orders ?? []) {
+    if (order.service_number && order.customer_name) centers.set(order.service_number, order.customer_name);
+  }
+  return {
+    names,
+    visits: data.map((visit) => ({
+      supervisorId: visit.supervisor_id,
+      status: visit.status,
+      siteName: visit.site_name,
+      serviceNumber: visit.service_number,
+      costCenter: (visit.service_number && centers.get(visit.service_number)) || visit.site_name,
+      createdAt: visit.created_at,
+    })),
+  };
 }
 
 export async function GET(req: Request) {
@@ -14,49 +52,16 @@ export async function GET(req: Request) {
   if (gate.error) return gate.error;
 
   const { searchParams } = new URL(req.url);
-  const group = searchParams.get("group") ?? "supervisor";
+  const group = parseReportGroup(searchParams.get("group"));
   const from = searchParams.get("from");
   const to = searchParams.get("to");
   const format = searchParams.get("format") ?? "json";
-
-  const admin = createAdminClient();
-  if (!admin) {
-    return NextResponse.json({ rows: [], warning: "sin_supabase" });
-  }
-
-  let q = admin.from("visits").select("supervisor_id, status, site_name, service_number, cost_center_id, created_at");
-  if (from) q = q.gte("created_at", from);
-  if (to) q = q.lte("created_at", to);
-  const { data, error } = await q;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  const rows = Object.values(
-    (data ?? []).reduce<Record<string, { key: string; total: number; completed: number; novedad: number }>>(
-      (acc, v) => {
-        const key =
-          group === "cost_center"
-            ? (v.cost_center_id ?? "sin_cc")
-            : group === "period"
-              ? String(v.created_at).slice(0, 7)
-              : (v.supervisor_id ?? "sin_supervisor");
-        acc[key] ??= { key, total: 0, completed: 0, novedad: 0 };
-        acc[key].total += 1;
-        if (v.status === "completada") acc[key].completed += 1;
-        if (v.status === "novedad") acc[key].novedad += 1;
-        return acc;
-      },
-      {},
-    ),
-  );
+  const loaded = await loadVisits();
+  const visits = loaded.visits.filter((visit) => inReportRange(visit.createdAt, from, to));
+  const rows = buildReportRows(visits, group, loaded.names);
 
   if (format === "csv") {
-    const header = "grupo,total,completadas,novedades,cumplimiento_pct";
-    const lines = rows.map((r) =>
-      [r.key, r.total, r.completed, r.novedad, r.total ? Math.round((r.completed / r.total) * 100) : 0]
-        .map(csvEscape)
-        .join(","),
-    );
-    return new NextResponse([header, ...lines].join("\n"), {
+    return new NextResponse(reportToCsv(group, rows, visits, loaded.names), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": `attachment; filename="reporte-${group}.csv"`,
@@ -65,17 +70,7 @@ export async function GET(req: Request) {
   }
 
   if (format === "pdf") {
-    const lines = [
-      `Grupo: ${group}`,
-      `Generado: ${new Date().toISOString()}`,
-      "",
-      ...rows.map(
-        (r) =>
-          `${r.key}  total=${r.total}  ok=${r.completed}  nov=${r.novedad}  cumplimiento=${r.total ? Math.round((r.completed / r.total) * 100) : 0}%`,
-      ),
-    ];
-    const bytes = buildSimplePdf(`Reporte LimpiAPP (${group})`, lines);
-    return new NextResponse(Buffer.from(bytes), {
+    return new NextResponse(Buffer.from(reportToPdf(group, rows, from, to)), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="reporte-${group}.pdf"`,
@@ -83,5 +78,5 @@ export async function GET(req: Request) {
     });
   }
 
-  return NextResponse.json({ rows, formatHint: "csv|pdf|json" });
+  return NextResponse.json({ group, from, to, rows, total: visits.length });
 }

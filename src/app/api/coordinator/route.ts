@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { memory } from "@/lib/memory-store";
+import { ensureDemoShowcase } from "@/lib/demo-data";
 import { coordinatorAction } from "@/lib/orders";
 import { requireRole } from "@/lib/api-auth";
 import { coordinatorPostSchema } from "@/lib/schemas";
@@ -8,6 +9,7 @@ import { coordinatorPostSchema } from "@/lib/schemas";
 export async function GET(req: Request) {
   const gate = await requireRole(req, ["coordinador"]);
   if (gate.error) return gate.error;
+  ensureDemoShowcase();
 
   const { searchParams } = new URL(req.url);
   const kind = searchParams.get("kind") ?? "visits";
@@ -73,7 +75,9 @@ export async function GET(req: Request) {
         completed: visits.filter((v) => v.status === "completada").length,
         inProgress: visits.filter((v) => v.status === "en_curso").length,
         incidents: visits.filter((v) => v.status === "novedad").length,
-        compliancePct: 0,
+        compliancePct: visits.length
+          ? Math.round((visits.filter((v) => v.status === "completada").length / visits.length) * 100)
+          : 0,
         assignedSupervisors: 0,
         activeSupervisors: 0,
       },

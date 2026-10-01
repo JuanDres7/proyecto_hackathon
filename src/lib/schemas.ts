@@ -85,4 +85,5 @@ export const sessionSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["supervisor", "coordinador", "cliente"]),
   fullName: z.string().optional(),
+  email: z.string().optional(),
 });

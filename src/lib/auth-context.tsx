@@ -8,40 +8,17 @@ import {
   useMemo,
   useState,
 } from "react";
+import { authenticateSeed } from "./seed-users";
 import { createClient, isSupabaseConfigured } from "./supabase/client";
 import type { SessionUser, UserRole } from "./types";
 
 const STORAGE_KEY = "campo.session";
 
-const DEMO_USERS: Record<UserRole, SessionUser> = {
-  supervisor: {
-    id: "demo-supervisor",
-    email: "supervisor@campo.local",
-    fullName: "Ana Supervisor",
-    role: "supervisor",
-    demo: true,
-  },
-  coordinador: {
-    id: "demo-coordinador",
-    email: "coordinador@campo.local",
-    fullName: "Carlos Coordinador",
-    role: "coordinador",
-    demo: true,
-  },
-  cliente: {
-    id: "demo-cliente",
-    email: "cliente@campo.local",
-    fullName: "Cliente público",
-    role: "cliente",
-    demo: true,
-  },
-};
-
 type AuthContextValue = {
   user: SessionUser | null;
   loading: boolean;
   supabaseReady: boolean;
-  enterDemo: (role: UserRole) => void;
+  signIn: (email: string, password: string) => Promise<boolean>;
   signOut: () => Promise<void>;
 };
 
@@ -66,7 +43,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: session.id, role: session.role, fullName: session.fullName }),
+            body: JSON.stringify({
+              id: session.id,
+              role: session.role,
+              fullName: session.fullName,
+              email: session.email,
+            }),
           });
         }
         return;
@@ -106,16 +88,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const enterDemo = useCallback((role: UserRole) => {
-    const next = DEMO_USERS[role];
+  const signIn = useCallback(async (email: string, password: string) => {
+    const next = authenticateSeed(email, password);
+    if (!next) return false;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    try {
+      const response = await fetch("/api/session", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: next.id,
+          role: next.role,
+          fullName: next.fullName,
+          email: next.email,
+        }),
+      });
+      if (!response.ok) {
+        localStorage.removeItem(STORAGE_KEY);
+        return false;
+      }
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+      return false;
+    }
     setUser(next);
-    void fetch("/api/session", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: next.id, role: next.role, fullName: next.fullName }),
-    });
+    return true;
   }, []);
 
   const signOut = useCallback(async () => {
@@ -127,8 +125,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, supabaseReady, enterDemo, signOut }),
-    [user, loading, supabaseReady, enterDemo, signOut],
+    () => ({ user, loading, supabaseReady, signIn, signOut }),
+    [user, loading, supabaseReady, signIn, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

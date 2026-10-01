@@ -11,6 +11,7 @@ export async function POST(req: Request) {
     id: parsed.data.id,
     role: parsed.data.role,
     demo: true,
+    email: parsed.data.email,
   });
   const res = NextResponse.json({ ok: true });
   res.cookies.set(cookie.name, cookie.value, cookie.options);

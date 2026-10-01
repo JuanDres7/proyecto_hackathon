@@ -1,3 +1,4 @@
+import { ensureDemoShowcase } from "./demo-data";
 import { createAdminClient } from "./supabase/admin";
 import { memory } from "./memory-store";
 import { CANCELLATION_REASONS, SERVICE_CATALOG } from "./catalog";
@@ -231,6 +232,7 @@ export async function lookupProgress(serviceNumber: string) {
 }
 
 export async function listConfirmedServices() {
+  ensureDemoShowcase();
   const admin = createAdminClient();
   if (admin) {
     const { data } = await admin

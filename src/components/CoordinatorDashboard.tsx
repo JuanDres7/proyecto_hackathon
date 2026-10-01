@@ -86,16 +86,21 @@ export function CoordinatorDashboard() {
   }
 
   useEffect(() => {
-    void load();
-    if (!isSupabaseConfigured()) return;
+    const start = window.setTimeout(() => {
+      void load();
+    }, 0);
+    if (!isSupabaseConfigured()) {
+      return () => window.clearTimeout(start);
+    }
     const supabase = createClient();
-    if (!supabase) return;
+    if (!supabase) return () => window.clearTimeout(start);
     const channel = supabase
       .channel("coord-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "visits" }, () => void load())
       .on("postgres_changes", { event: "*", schema: "public", table: "alerts" }, () => void load())
       .subscribe((status) => setLive(status === "SUBSCRIBED"));
     return () => {
+      window.clearTimeout(start);
       void supabase.removeChannel(channel);
     };
   }, []);
@@ -359,21 +364,116 @@ export function CoordinatorDashboard() {
         </div>
       )}
 
-      {tab === "reportes" && (
-        <div className="bg-surface-container-low rounded-xl p-5 border space-y-3 text-xs">
-          <p>CSV (Excel) y PDF nativo por supervisor, centro de costo o período.</p>
-          {(["supervisor", "cost_center", "period"] as const).map((g) => (
-            <div key={g} className="flex gap-3">
-              <a className="text-primary underline" href={`/api/reports?group=${g}&format=csv`}>
-                {g}.csv
-              </a>
-              <a className="text-primary underline" href={`/api/reports?group=${g}&format=pdf`}>
-                {g}.pdf
-              </a>
-            </div>
+      {tab === "reportes" && <ReportsPanel />}
+    </div>
+  );
+}
+
+function ReportsPanel() {
+  const [group, setGroup] = useState<"supervisor" | "cost_center" | "period">("supervisor");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [rows, setRows] = useState<
+    { key: string; label: string; total: number; completed: number; novedad: number; compliancePct: number }[]
+  >([]);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams({ group });
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    let cancelled = false;
+    void fetch(`/api/reports?${params}`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("reports");
+        return response.json() as Promise<{ rows?: typeof rows; total?: number }>;
+      })
+      .then((json) => {
+        if (cancelled) return;
+        setRows(json.rows ?? []);
+        setTotal(json.total ?? 0);
+        setError("");
+      })
+      .catch(() => {
+        if (!cancelled) setError("No se pudo generar el reporte.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [group, from, to]);
+
+  function reportHref(format: "csv" | "pdf") {
+    const params = new URLSearchParams({ group, format });
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    return `/api/reports?${params}`;
+  }
+
+  return (
+    <div className="bg-surface-container-low rounded-xl p-5 border border-border-subtle space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-text-primary">Reportes</h2>
+        <p className="mt-1 text-xs text-text-secondary">
+          Agrupa las visitas por supervisor, centro de costo o mes. Puedes verlas aquí o descargarlas.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <select
+          className="bg-surface-container text-xs px-3 py-1.5 rounded-lg border"
+          value={group}
+          onChange={(event) => setGroup(event.target.value as typeof group)}
+        >
+          <option value="supervisor">Por supervisor</option>
+          <option value="cost_center">Por centro de costo</option>
+          <option value="period">Por mes</option>
+        </select>
+        <input
+          type="date"
+          className="bg-surface-container text-xs px-3 py-1.5 rounded-lg border"
+          value={from}
+          onChange={(event) => setFrom(event.target.value)}
+        />
+        <input
+          type="date"
+          className="bg-surface-container text-xs px-3 py-1.5 rounded-lg border"
+          value={to}
+          onChange={(event) => setTo(event.target.value)}
+        />
+        <a className="text-xs text-primary underline" href={reportHref("csv")}>
+          Descargar CSV
+        </a>
+        <a className="text-xs text-primary underline" href={reportHref("pdf")}>
+          Descargar PDF
+        </a>
+      </div>
+      {error ? <p className="text-xs text-status-warning">{error}</p> : null}
+      <p className="text-xs text-text-muted">{total} visitas en el período.</p>
+      <table className="w-full text-left text-xs">
+        <thead>
+          <tr className="text-text-muted border-b border-border-subtle">
+            <th className="py-2">Grupo</th>
+            <th>Total</th>
+            <th>Completadas</th>
+            <th>Novedades</th>
+            <th>Cumplimiento</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className="border-b border-border-subtle">
+              <td className="py-2">{row.label}</td>
+              <td>{row.total}</td>
+              <td>{row.completed}</td>
+              <td>{row.novedad}</td>
+              <td>{row.compliancePct}%</td>
+            </tr>
           ))}
-        </div>
-      )}
+        </tbody>
+      </table>
+      {rows.length === 0 && !error ? (
+        <p className="text-xs text-text-muted">No hay visitas en este período.</p>
+      ) : null}
     </div>
   );
 }

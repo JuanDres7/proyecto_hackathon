@@ -16,20 +16,8 @@ type ConfirmedRow = {
   serviceNumber?: string;
   location?: string;
   services?: string[];
-  enRouteAt?: string;
-  scheduledAt?: string;
-  scheduled_at?: string;
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  sin_servicio_activo: "Sin servicio activo",
-  pendiente_sincronizacion: "Pendiente de sincronización",
-  asignado: "Asignado",
-  en_camino: "En camino",
-  pausa_novedad: "En pausa",
-  en_ejecucion: "En ejecución",
-  finalizado: "Finalizado",
-  confirmado_sin_supervisor: "Confirmado",
+  scheduledAt?: string | null;
+  statusLabel?: string;
 };
 
 function formatWhen(iso?: string | null) {
@@ -47,52 +35,27 @@ export function useCurrentService() {
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const response = await fetch("/api/confirmed-services");
+      const response = await fetch("/api/my-services", { credentials: "include" });
       if (!response.ok) throw new Error("services");
       const json = (await response.json()) as { services?: ConfirmedRow[] };
       const list = (json.services ?? []).filter((item) => item.serviceNumber);
       const snapshot = readServiceSnapshot();
-      const row = list.find((item) => item.serviceNumber === snapshot?.code) ?? list[0];
-      if (!row?.serviceNumber) {
+      const preferred =
+        list.find((item) => item.statusLabel === "En ejecución") ??
+        list.find((item) => item.statusLabel === "Asignado") ??
+        list.find((item) => item.serviceNumber === snapshot?.code) ??
+        list[0];
+      if (!preferred?.serviceNumber) {
         setService(null);
         return;
       }
-
-      let status = row.enRouteAt ? "En camino" : "Confirmado";
-      const storedWhen = row.scheduledAt || row.scheduled_at;
-      let when = formatWhen(storedWhen);
-
-      try {
-        const progressResponse = await fetch("/api/progress", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serviceNumber: row.serviceNumber }),
-        });
-        if (progressResponse.ok) {
-          const progress = (await progressResponse.json()) as {
-            status?: string;
-            scheduledAt?: string;
-          };
-          if (progress.status && STATUS_LABEL[progress.status]) {
-            status = STATUS_LABEL[progress.status];
-          }
-          if (!when && progress.scheduledAt) when = formatWhen(progress.scheduledAt);
-        }
-      } catch {
-        // El listado confirmado sigue siendo suficiente para el código y el lugar.
-      }
-
-      const sameSnapshot = snapshot?.code === row.serviceNumber ? snapshot : null;
-      const names = serviceLabels(
-        row.services && row.services.length > 0 ? row.services : (sameSnapshot?.services ?? []),
-      );
-      if (!when) when = formatWhen(sameSnapshot?.when);
+      const names = serviceLabels(preferred.services ?? []);
       setService({
-        code: row.serviceNumber,
-        status,
+        code: preferred.serviceNumber,
+        status: preferred.statusLabel || "Confirmado",
         services: names || "Sin servicios",
-        when: when || "Sin fecha",
-        location: row.location?.trim() || sameSnapshot?.location?.trim() || "Sin ubicación",
+        when: formatWhen(preferred.scheduledAt) || "Sin fecha",
+        location: preferred.location?.trim() || "Sin ubicación",
       });
     } catch {
       setError("No se pudo cargar el servicio.");

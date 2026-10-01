@@ -9,7 +9,7 @@ function secret() {
   return process.env.CAMPO_SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "dev-only-campo";
 }
 
-export type ApiActor = { id: string; role: UserRole; demo: boolean };
+export type ApiActor = { id: string; role: UserRole; demo: boolean; email?: string };
 
 function sign(payload: string) {
   return createHmac("sha256", secret()).update(payload).digest("hex");
@@ -34,7 +34,12 @@ export function decodeDemoSession(token: string | undefined): ApiActor | null {
     const parsed = JSON.parse(Buffer.from(body, "base64url").toString()) as ApiActor & { exp?: number };
     if (parsed.exp && parsed.exp < Date.now()) return null;
     if (!parsed.role || !parsed.id) return null;
-    return { id: parsed.id, role: parsed.role, demo: true };
+    return {
+      id: parsed.id,
+      role: parsed.role,
+      demo: true,
+      email: typeof parsed.email === "string" ? parsed.email : undefined,
+    };
   } catch {
     return null;
   }
@@ -67,7 +72,9 @@ export async function requireRole(req: Request, roles: UserRole[]) {
       if (!roles.includes(role)) {
         return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
       }
-      return { actor: { id: data.user.id, role, demo: false } as ApiActor };
+      return {
+        actor: { id: data.user.id, role, demo: false, email: data.user.email ?? undefined } as ApiActor,
+      };
     }
   }
 
