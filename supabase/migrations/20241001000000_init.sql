@@ -32,11 +32,26 @@ create table public.visits (
 
 create table public.visit_evidence (
   id uuid primary key default gen_random_uuid(),
-  visit_id uuid references public.visits (id) on delete cascade,
-  storage_path text,
+  visit_id uuid references public.visits (id) on delete cascade not null,
+  storage_path text not null,
   caption text,
   created_at timestamptz not null default now()
 );
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger visits_set_updated_at
+before update on public.visits
+for each row
+execute procedure public.set_updated_at();
 
 create table public.service_orders (
   id uuid primary key default gen_random_uuid(),
