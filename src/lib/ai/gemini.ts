@@ -4,9 +4,6 @@ import type { GeminiContent } from "./gemini-types";
 
 export type { GeminiContent, GeminiPart } from "./gemini-types";
 
-const ENDPOINT =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
-
 const KEY_NAMES = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_KEY"];
 
 function unquote(value: string) {
@@ -50,6 +47,17 @@ export function geminiApiKey() {
   return "";
 }
 
+function modelsToTry() {
+  const preferred = process.env.GEMINI_MODEL?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+  return ["gemini-3.8-flash", ...preferred, "gemini-3.5-flash-lite", "gemini-3.5-flash"].filter(
+    (model, i, all) => all.indexOf(model) === i,
+  );
+}
+
+function endpoint(model: string) {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+}
+
 function stripFences(text: string) {
   return text.replace(/```json|```/g, "").trim();
 }
@@ -71,52 +79,105 @@ function errorMessage(status: number, body: string) {
 
 type ModelPart = { text?: string; thought?: boolean };
 
+async function generateOnce(opts: {
+  model: string;
+  key: string;
+  system?: string;
+  contents: GeminiContent[];
+  json: boolean;
+}) {
+  const body: Record<string, unknown> = {
+    contents: opts.contents,
+    generationConfig: opts.json
+      ? { temperature: 0.4, responseMimeType: "application/json" }
+      : { temperature: 0.3 },
+  };
+  if (opts.system) {
+    body.systemInstruction = { parts: [{ text: opts.system }] };
+  }
+  const res = await fetch(endpoint(opts.model), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": opts.key,
+    },
+    body: JSON.stringify(body),
+  });
+  const raw = await res.text();
+  return { status: res.status, raw };
+}
+
+function candidateText(raw: string) {
+  try {
+    const json = JSON.parse(raw) as {
+      candidates?: { content?: { parts?: ModelPart[] } }[];
+    };
+    return (json.candidates?.[0]?.content?.parts ?? [])
+      .filter((part) => part.text && !part.thought)
+      .map((part) => part.text ?? "")
+      .join("");
+  } catch {
+    return "";
+  }
+}
+
+export async function generateGeminiText(options: {
+  system?: string;
+  contents: GeminiContent[];
+  json?: boolean;
+}): Promise<{ ok: true; text: string; model: string } | { ok: false; error: string }> {
+  const key = geminiApiKey();
+  if (!key) return { ok: false, error: "No encontré GEMINI_API_KEY en el archivo .env." };
+
+  let last = "sin respuesta";
+  for (const model of modelsToTry()) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const { status, raw } = await generateOnce({
+          model,
+          key,
+          system: options.system,
+          contents: options.contents,
+          json: options.json === true,
+        });
+        if (status === 503) {
+          last = `${model}: saturado`;
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          continue;
+        }
+        if (status === 401 || status === 403) {
+          return { ok: false, error: errorMessage(status, raw) };
+        }
+        if (status === 400 && /API key|API_KEY|PERMISSION_DENIED/i.test(raw)) {
+          return { ok: false, error: errorMessage(status, raw) };
+        }
+        if (!status.toString().startsWith("2")) {
+          last = errorMessage(status, raw);
+          break;
+        }
+        const text = candidateText(raw);
+        if (!text.trim()) {
+          last = `${model}: vacío`;
+          break;
+        }
+        return { ok: true, text, model };
+      } catch (err) {
+        last = err instanceof Error ? `No pude llamar a Gemini: ${redact(err.message)}` : "red";
+      }
+    }
+  }
+  return { ok: false, error: last };
+}
+
 export async function generateGeminiJson<T>(options: {
   system: string;
   contents: GeminiContent[];
 }): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  const key = geminiApiKey();
-  if (!key) {
-    return { ok: false, error: "No encontré GEMINI_API_KEY en el archivo .env." };
-  }
-
+  const result = await generateGeminiText({ ...options, json: true });
+  if (!result.ok) return result;
   try {
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": key,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: options.system }] },
-        generationConfig: {
-          thinkingConfig: { thinkingLevel: "low" },
-        },
-        contents: options.contents,
-      }),
-    });
-    const body = await res.text();
-    if (!res.ok) return { ok: false, error: errorMessage(res.status, body) };
-
-    const json = JSON.parse(body) as {
-      candidates?: { content?: { parts?: ModelPart[] } }[];
-    };
-    const parts = (json.candidates?.[0]?.content?.parts ?? []).filter((part) => part.text && !part.thought);
-    for (const part of parts) {
-      try {
-        return { ok: true, data: JSON.parse(stripFences(part.text ?? "")) as T };
-      } catch {
-        // Puede ser texto normal, no JSON.
-      }
-    }
-    const text = parts
-      .map((part) => part.text ?? "")
-      .join("\n")
-      .trim();
-    if (!text) return { ok: false, error: "Gemini respondió vacío." };
-    return { ok: true, data: { reply: text } as T };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "error de red";
-    return { ok: false, error: `No pude llamar a Gemini: ${redact(message)}` };
+    return { ok: true, data: JSON.parse(stripFences(result.text)) as T };
+  } catch {
+    return { ok: true, data: { reply: stripFences(result.text) } as T };
   }
 }

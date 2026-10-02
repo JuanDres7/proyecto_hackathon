@@ -1,5 +1,5 @@
 import { ensureDemoShowcase } from "./demo-data";
-import { createAdminClient } from "./supabase/admin";
+import { createAdminClient, withAdminTimeout } from "./supabase/admin";
 import { memory } from "./memory-store";
 import { CANCELLATION_REASONS, SERVICE_CATALOG } from "./catalog";
 import { deriveProgress, progressMessage } from "./progress";
@@ -249,14 +249,16 @@ export async function listConfirmedServices() {
   const local = confirmedFromMemory();
   const admin = createAdminClient();
   if (!admin) return local;
-  const { data, error } = await admin
-    .from("service_orders")
-    .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status")
-    .eq("status", "confirmed")
-    .order("created_at", { ascending: false });
-  if (error || !data) return local;
-  const seen = new Set(data.map((row) => row.service_number));
-  return [...data, ...local.filter((row) => row.service_number && !seen.has(row.service_number))];
+  const result = await withAdminTimeout(
+    admin
+      .from("service_orders")
+      .select("service_number, location, services, customer_name, en_route_at, supervisor_id, status")
+      .eq("status", "confirmed")
+      .order("created_at", { ascending: false }),
+  );
+  if (!result || result.error || !result.data) return local;
+  const seen = new Set(result.data.map((row) => row.service_number));
+  return [...result.data, ...local.filter((row) => row.service_number && !seen.has(row.service_number))];
 }
 
 export async function markEnRoute(serviceNumber: string, supervisorId: string) {

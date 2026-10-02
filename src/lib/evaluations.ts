@@ -1,5 +1,6 @@
 import { createAdminClient } from "./supabase/admin";
 import { memory } from "./memory-store";
+import { generateGeminiJson, generateGeminiText } from "./ai/gemini";
 
 export async function classifyComment(text: string, serviceNumber?: string) {
   const trimmed = text.trim();
@@ -42,59 +43,33 @@ export async function visionCheck(opts: { comment: string; image?: string }) {
     };
   }
 
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    return {
-      vision_valid: true,
-      vision_note: "Revisión visual no disponible; se guarda la foto sin bloquear la evaluación.",
-    };
-  }
-
   const [meta, data] = opts.image.split(",");
   const mime = meta.match(/data:(.*);base64/)?.[1] ?? "image/jpeg";
-  const res = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: "¿La foto corresponde al comentario del cliente? Responde solo JSON {\"match\":true|false,\"note\":\"frase corta en español\"}. No inventes códigos, precios, horas ni estados.",
-              },
-              { text: `Comentario: ${opts.comment}` },
-              { inline_data: { mime_type: mime, data } },
-            ],
-          },
+  const vision = await generateGeminiJson<{ match?: boolean; note?: string }>({
+    system:
+      "Responde solo JSON {\"match\":true|false,\"note\":\"frase corta en español\"}. No inventes códigos, precios, horas ni estados.",
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: `Comentario: ${opts.comment}` },
+          { inline_data: { mime_type: mime, data } },
         ],
-      }),
-    },
-  );
-  if (!res.ok) {
+      },
+    ],
+  });
+  if (!vision.ok) {
     return {
       vision_valid: null as boolean | null,
       vision_note: "La revisión visual no estuvo disponible.",
     };
   }
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
+  return {
+    vision_valid: Boolean(vision.data.match),
+    vision_note:
+      vision.data.note ??
+      (vision.data.match ? "La foto corresponde al texto." : "La foto no corresponde al texto."),
   };
-  const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("\n") ?? "";
-  try {
-    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim()) as { match?: boolean; note?: string };
-    return {
-      vision_valid: Boolean(parsed.match),
-      vision_note: parsed.note ?? (parsed.match ? "La foto corresponde al texto." : "La foto no corresponde al texto."),
-    };
-  } catch {
-    return {
-      vision_valid: null as boolean | null,
-      vision_note: "No se pudo interpretar la revisión visual.",
-    };
-  }
 }
 
 export function fallbackSummary(rating: number, comment: string) {
@@ -103,36 +78,21 @@ export function fallbackSummary(rating: number, comment: string) {
 }
 
 export async function summarizeEvaluation(rating: number, comment: string, label: string) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return fallbackSummary(rating, comment);
-  try {
-    const res = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+  const result = await generateGeminiText({
+    json: false,
+    contents: [
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `Resume en español, una o dos frases, esta evaluación. No inventes código, precio, hora, ubicación ni estado de visita. Estrellas:${rating}. Clase:${label}. Comentario:${comment || "(vacío)"}`,
-                },
-              ],
-            },
-          ],
-        }),
+        role: "user",
+        parts: [
+          {
+            text: `Resume en español, una o dos frases, esta evaluación. No inventes código, precio, hora, ubicación ni estado de visita. Estrellas:${rating}. Clase:${label}. Comentario:${comment || "(vacío)"}`,
+          },
+        ],
       },
-    );
-    if (!res.ok) return fallbackSummary(rating, comment);
-    const json = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    return json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("\n").trim() || fallbackSummary(rating, comment);
-  } catch {
-    return fallbackSummary(rating, comment);
-  }
+    ],
+  });
+  if (!result.ok) return fallbackSummary(rating, comment);
+  return result.text.trim() || fallbackSummary(rating, comment);
 }
 
 export async function submitEvaluation(input: {

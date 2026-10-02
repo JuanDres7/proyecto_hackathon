@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { sessionCookie } from "@/lib/api-auth";
+import { ensureDemoShowcase } from "@/lib/demo-data";
 import { sessionSchema } from "@/lib/schemas";
 
 export async function POST(req: Request) {
+  ensureDemoShowcase();
   const parsed = sessionSchema.safeParse(await req.json());
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid" }, { status: 400 });

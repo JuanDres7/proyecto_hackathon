@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/api-auth";
 import { ensureDemoShowcase } from "@/lib/demo-data";
-import { SEED_USERS } from "@/lib/seed-users";
+import { SEED_USERS, TEAM_SUPERVISORS } from "@/lib/seed-users";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   buildReportRows,
@@ -17,6 +17,7 @@ async function loadVisits(): Promise<{ visits: ReportVisit[]; names: Record<stri
   ensureDemoShowcase();
   const names: Record<string, string> = {};
   for (const user of SEED_USERS) names[user.id] = user.fullName;
+  for (const teammate of TEAM_SUPERVISORS) names[teammate.id] = teammate.fullName;
   const admin = createAdminClient();
   if (!admin) return { visits: visitsFromMemory(), names };
 

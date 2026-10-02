@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { SERVICE_CATALOG } from "@/lib/catalog";
 import { requireRole } from "@/lib/api-auth";
+import { generateGeminiJson } from "@/lib/ai/gemini";
 
 type Extracted = {
   customerName?: string;
@@ -17,8 +18,8 @@ type Extracted = {
 function heuristic(text: string): Extracted {
   const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
   const phone = text.match(/\b\d{7,15}\b/)?.[0];
-  const services = SERVICE_CATALOG.filter((s) =>
-    text.toLowerCase().includes(s.label.toLowerCase()) || text.toLowerCase().includes(s.id),
+  const services = SERVICE_CATALOG.filter(
+    (s) => text.toLowerCase().includes(s.label.toLowerCase()) || text.toLowerCase().includes(s.id),
   ).map((s) => s.id);
   return {
     email,
@@ -33,45 +34,17 @@ export async function POST(req: Request) {
   if (gate.error) return gate.error;
   const body = (await req.json()) as { text: string };
   const base = heuristic(body.text);
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    return NextResponse.json({ extracted: base, source: "heuristic" });
-  }
-
-  const res = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: `Extrae datos de cotización. Responde SOLO JSON con claves: customerName, customerDocument, email, phone, openingMessage, services (array con valores aseo_general|jardineria|limpieza_piscinas), scheduledAt (ISO si puedes), location, accessNotes. No inventes campos vacíos, ni código, ni precio, ni hora si no está, ni ubicación si no está, ni estado de visita.\nTexto:${body.text}`,
-              },
-            ],
-          },
-        ],
-      }),
+  const model = await generateGeminiJson<Extracted>({
+    system:
+      "Extrae datos de cotización. Responde SOLO JSON con claves: customerName, customerDocument, email, phone, openingMessage, services (array aseo_general|jardineria|limpieza_piscinas), scheduledAt, location, accessNotes. No inventes código, precio ni estado de visita.",
+    contents: [{ role: "user", parts: [{ text: body.text }] }],
+  });
+  if (!model.ok) return NextResponse.json({ extracted: base, source: "heuristic" });
+  return NextResponse.json({
+    extracted: {
+      ...base,
+      ...Object.fromEntries(Object.entries(model.data).filter(([, v]) => v != null && v !== "")),
     },
-  );
-  if (!res.ok) return NextResponse.json({ extracted: base, source: "heuristic" });
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("\n") ?? "";
-  try {
-    const parsed = JSON.parse(text.replace(/```json|```/g, "").trim()) as Extracted;
-    return NextResponse.json({
-      extracted: {
-        ...base,
-        ...Object.fromEntries(Object.entries(parsed).filter(([, v]) => v != null && v !== "")),
-      },
-      source: "gemini",
-    });
-  } catch {
-    return NextResponse.json({ extracted: base, source: "heuristic" });
-  }
+    source: "gemini",
+  });
 }

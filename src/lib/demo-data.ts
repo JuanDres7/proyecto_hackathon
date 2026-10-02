@@ -10,14 +10,18 @@ function atDay(offset: number, hour: number) {
 
 export function ensureDemoShowcase() {
   const current = memory.orders.byNumber("#3089");
-  if (
+  const alreadySeeded =
     current?.email === "cliente@limpiapp.co" &&
     current.location === "Cra 7 #71-21, Bogotá" &&
-    current.openingMessage === "Aseo de oficinas en la torre principal."
-  ) {
-    return;
-  }
+    current.openingMessage === "Aseo de oficinas en la torre principal.";
 
+  if (!alreadySeeded) {
+    seedLauraServices();
+  }
+  seedCoordinatorOps();
+}
+
+function seedLauraServices() {
   const client = {
     email: "cliente@limpiapp.co",
     customerName: "Laura Méndez",
@@ -218,6 +222,141 @@ export function ensureDemoShowcase() {
       priority: "media",
       status: "abierta",
       opened_at: atDay(-11, 9),
+    });
+  }
+
+  const g = globalThis as { __limpiapp?: { seq: number } };
+  if (g.__limpiapp && g.__limpiapp.seq < 3100) g.__limpiapp.seq = 3100;
+}
+
+function seedCoordinatorOps() {
+  const andres = { id: "demo-supervisor", name: "Andrés Ríos" };
+  const camila = { id: "demo-supervisor-2", name: "Camila Torres" };
+
+  const garden = memory.orders.byNumber("#3090");
+  if (garden) {
+    memory.orders.upsert({ ...garden, supervisorId: andres.id, supervisorName: andres.name });
+  }
+  const gardenVisit = memory.visits.byNumber("#3090");
+  if (gardenVisit) {
+    memory.visits.upsert({
+      ...gardenVisit,
+      status: "en_curso",
+      check_in_at: atDay(0, 9),
+      check_in_lat: 4.711,
+      check_in_lng: -74.072,
+      updated_at: atDay(0, 9),
+    });
+  }
+
+  const tower = memory.visits.byNumber("#3089");
+  if (tower) {
+    memory.visits.upsert({
+      ...tower,
+      check_in_lat: 4.655,
+      check_in_lng: -74.055,
+    });
+  }
+
+  memory.orders.upsert({
+    id: "demo-3092",
+    draftId: "demo-3092",
+    email: "andino@limpiapp.co",
+    customerName: "Centro Comercial Andino",
+    customerDocument: "900123456",
+    phone: "6015552200",
+    openingMessage: "Aseo de zonas comunes del centro comercial.",
+    services: ["aseo_general"],
+    scheduledAt: atDay(0, 14),
+    location: "Cra 11 #82-71, Bogotá",
+    accessNotes: "Ingreso por bahía de carga, nivel -2.",
+    serviceNumber: "#3092",
+    status: "confirmed",
+    supervisorId: camila.id,
+    supervisorName: camila.name,
+  });
+  memory.visits.upsert({
+    id: "demo-visit-3092",
+    client_uuid: "demo-visit-3092",
+    supervisor_id: camila.id,
+    service_number: "#3092",
+    site_name: "Cra 11 #82-71, Bogotá",
+    contracted_activity: "Aseo general",
+    status: "pendiente",
+    check_in_lat: 4.667,
+    check_in_lng: -74.053,
+    created_at: atDay(0, 14),
+    updated_at: atDay(0, 14),
+  });
+
+  memory.orders.upsert({
+    id: "demo-3093",
+    draftId: "demo-3093",
+    email: "hospital@limpiapp.co",
+    customerName: "Clínica del Country",
+    customerDocument: "800987654",
+    phone: "6015553388",
+    openingMessage: "Jardinería del acceso principal y el patio interno.",
+    services: ["jardineria"],
+    scheduledAt: atDay(0, 7),
+    location: "Cra 16 #82-57, Bogotá",
+    accessNotes: "Reportarse en seguridad biomédica.",
+    serviceNumber: "#3093",
+    status: "confirmed",
+    supervisorId: camila.id,
+    supervisorName: camila.name,
+    enRouteAt: atDay(0, 6),
+  });
+  memory.visits.upsert({
+    id: "demo-visit-3093",
+    client_uuid: "demo-visit-3093",
+    supervisor_id: camila.id,
+    service_number: "#3093",
+    site_name: "Cra 16 #82-57, Bogotá",
+    contracted_activity: "Jardinería",
+    status: "en_curso",
+    check_in_at: atDay(0, 7),
+    check_in_lat: 4.668,
+    check_in_lng: -74.057,
+    created_at: atDay(0, 7),
+    updated_at: atDay(0, 7),
+  });
+
+  if (!memory.alerts.all().some((alert) => alert.id === "demo-alert-3093")) {
+    memory.alerts.add({
+      id: "demo-alert-3093",
+      visit_id: "demo-visit-3093",
+      message: "Camila reportó retraso en #3093: el acceso biomédico tardó 25 minutos.",
+      severity: "baja",
+      status: "open",
+      created_at: atDay(0, 7),
+    });
+  }
+
+  const alert3066 = memory.alerts.all().find((alert) => alert.id === "demo-alert-3066");
+  if (alert3066 && !alert3066.status) {
+    alert3066.status = "open";
+  }
+
+  if (!memory.complaints.all().some((item) => item.id === "demo-complaint-3091")) {
+    memory.complaints.add({
+      id: "demo-complaint-3091",
+      service_number: "#3091",
+      body: "El agua de la piscina quedó con olor a cloro muy fuerte.",
+      rating: 2,
+      label: "calidad",
+      confidence: 78,
+      summary: "Queja por olor a cloro tras el cierre de #3091.",
+      created_at: atDay(-1, 18),
+    });
+  }
+  if (!memory.pqr.all().some((item) => item.id === "demo-pqr-3091")) {
+    memory.pqr.add({
+      id: "demo-pqr-3091",
+      service_number: "#3091",
+      priority: "alta",
+      status: "abierta",
+      opened_at: atDay(-1, 18),
     });
   }
 

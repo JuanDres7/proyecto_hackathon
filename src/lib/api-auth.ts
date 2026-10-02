@@ -83,7 +83,10 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null
   }
 }
 
-export async function requireRole(req: Request, roles: UserRole[]) {
+export async function requireRole(
+  req: Request,
+  roles: UserRole[],
+): Promise<{ actor: ApiActor } | { error: NextResponse }> {
   const demo = demoFromRequest(req);
   if (demo && roles.includes(demo.role)) return { actor: demo };
 

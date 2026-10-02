@@ -19,6 +19,8 @@ type MemoryVisit = {
   status: string;
   check_in_at?: string | null;
   check_out_at?: string | null;
+  check_in_lat?: number | null;
+  check_in_lng?: number | null;
   novedad?: string | null;
   notes?: string | null;
   novedad_priority?: string | null;
@@ -54,6 +56,8 @@ type MemoryAlert = {
   visit_id: string;
   message: string;
   severity: string;
+  status?: string;
+  coordinator_comment?: string | null;
   created_at: string;
 };
 

@@ -27,9 +27,13 @@ describe("datos de presentación", () => {
     expect(closed?.activities.some((activity) => activity.justification.includes("jabón"))).toBe(true);
     expect(await serviceDetailForEmail("otro@limpiapp.co", "3089")).toBeNull();
 
-    const rows = buildReportRows(visitsFromMemory(), "supervisor", { "demo-supervisor": "Andrés Ríos" });
-    expect(rows[0]?.label).toBe("Andrés Ríos");
-    expect(rows[0]?.completed).toBeGreaterThan(0);
-    expect(rows[0]?.novedad).toBeGreaterThan(0);
+    const rows = buildReportRows(visitsFromMemory(), "supervisor", {
+      "demo-supervisor": "Andrés Ríos",
+      "demo-supervisor-2": "Camila Torres",
+    });
+    expect(rows.map((row) => row.label).sort()).toEqual(["Andrés Ríos", "Camila Torres"]);
+    expect(rows.find((row) => row.label === "Andrés Ríos")?.completed).toBeGreaterThan(0);
+    expect(rows.find((row) => row.label === "Andrés Ríos")?.novedad).toBeGreaterThan(0);
+    expect(listed.some((row) => row.service_number === "#3092")).toBe(true);
   });
 });

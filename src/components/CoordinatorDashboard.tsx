@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { COORDINATOR_PROFILE, TEAM_SUPERVISORS } from "@/lib/seed-users";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 
 type VisitRow = {
@@ -144,6 +145,40 @@ export function CoordinatorDashboard() {
 
   return (
     <div className="flex flex-col gap-6">
+      <section className="rounded-xl border border-border-subtle bg-surface-container-low p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-border-subtle bg-surface-container-high text-lg font-bold text-primary">
+              MD
+            </div>
+            <div>
+              <p className="text-[11px] font-mono uppercase tracking-wide text-text-muted">Perfil operativo</p>
+              <h2 className="mt-1 text-lg font-semibold text-text-primary">{COORDINATOR_PROFILE.fullName}</h2>
+              <p className="text-sm text-text-secondary">{COORDINATOR_PROFILE.title}</p>
+              <p className="mt-2 text-xs text-text-muted">
+                {COORDINATOR_PROFILE.zone} · {COORDINATOR_PROFILE.shift}
+              </p>
+              <p className="mt-1 text-xs text-text-secondary">
+                {COORDINATOR_PROFILE.email} · {COORDINATOR_PROFILE.phone}
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">
+            <div className="rounded-lg border border-border-subtle bg-surface-container px-3 py-2">
+              <p className="font-mono text-[10px] uppercase text-text-muted">Centros</p>
+              <p className="mt-1 text-text-primary">{COORDINATOR_PROFILE.costCenters.length}</p>
+            </div>
+            <div className="rounded-lg border border-border-subtle bg-surface-container px-3 py-2">
+              <p className="font-mono text-[10px] uppercase text-text-muted">Equipo</p>
+              <p className="mt-1 text-text-primary">{supervisors.length || TEAM_SUPERVISORS.length} supervisores</p>
+            </div>
+            <div className="rounded-lg border border-border-subtle bg-surface-container px-3 py-2 col-span-2 sm:col-span-1">
+              <p className="font-mono text-[10px] uppercase text-text-muted">Cobertura</p>
+              <p className="mt-1 text-text-primary">{COORDINATOR_PROFILE.costCenters.join(" · ")}</p>
+            </div>
+          </div>
+        </div>
+      </section>
       <p className="text-[11px] font-mono text-text-muted">
         {live ? "Realtime conectado" : "Polling / sin canal Realtime"}
       </p>

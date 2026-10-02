@@ -238,6 +238,10 @@ export function ClientChat() {
         noteAssistantDown(false);
         return;
       }
+      if (!json.available && !json.reply) {
+        noteAssistantDown(false);
+        return;
+      }
       if (json.editLocked) setDraftLockedByRoute(true);
       const labels = json.editLocked ? [] : capturedLabels(draft, json.extracted ?? {});
       if (!json.editLocked) applyExtracted(json.extracted ?? {});

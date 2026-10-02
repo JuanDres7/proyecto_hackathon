@@ -9,6 +9,7 @@ const PHASES = new Set<PuroPhase>(["cotizacion", "progreso", "finalizacion"]);
 export async function POST(req: Request) {
   const gate = await requireRole(req, ["cliente", "coordinador", "supervisor"]);
   if (gate.error) return gate.error;
+
   const body = (await req.json().catch(() => null)) as {
     phase?: PuroPhase;
     message?: string;
